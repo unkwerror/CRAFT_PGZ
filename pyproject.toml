@@ -35,11 +35,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
+# Шаблоны Jinja попадают в wheel автоматически как package data (они внутри пакета).
 packages = ["src/tender_ingest"]
-
-# Шаблоны Jinja — package data (в Docker пакет ставится не editable).
-[tool.hatch.build.targets.wheel.force-include]
-"src/tender_ingest/web/templates" = "tender_ingest/web/templates"
 
 [tool.ruff]
 line-length = 100
