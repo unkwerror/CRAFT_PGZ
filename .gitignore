@@ -1,0 +1,23 @@
+# секреты / окружение
+.env
+*.env
+!.env.example
+
+# выгрузки и данные (фикстуры в tests/fixtures/ — исключение, добавляются явно)
+data/
+*.zip
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# инструменты
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
