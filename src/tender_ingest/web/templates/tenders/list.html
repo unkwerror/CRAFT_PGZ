@@ -1,61 +1,102 @@
 {% extends "base.html" %}
 {% from "_macros.html" import verdict_badge, score_pill %}
 {% block title %}Закупки — {{ total }}{% endblock %}
+
+{% macro inp(name, label, value, type='text', ph='') %}
+<div>
+  <label class="block text-xs text-slate-500 mb-1">{{ label }}</label>
+  <input name="{{ name }}" value="{{ value if value is not none else '' }}" type="{{ type }}" placeholder="{{ ph }}"
+         class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">
+</div>
+{% endmacro %}
+
+{% macro sel(name, label, current, options) %}
+<div>
+  <label class="block text-xs text-slate-500 mb-1">{{ label }}</label>
+  <select name="{{ name }}" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">
+    <option value="">все</option>
+    {% for o in options %}
+    <option value="{{ o }}" {{ 'selected' if current == o }}>{{ o }}</option>
+    {% endfor %}
+  </select>
+</div>
+{% endmacro %}
+
 {% block content %}
 
 <div class="flex items-baseline justify-between mb-4">
   <h1 class="text-xl font-semibold">Закупки</h1>
   <div class="text-sm text-slate-500">
-    Всего: {{ facets.total }} ·
+    Найдено: {{ total }} из {{ facets.total }} ·
     <span class="text-emerald-700">релевантных {{ facets.verdict_counts.get('relevant', 0) }}</span> ·
     спорных {{ facets.verdict_counts.get('maybe', 0) }} ·
     шум {{ facets.verdict_counts.get('noise', 0) }}
   </div>
 </div>
 
-<form method="get" class="bg-white rounded-lg p-4 mb-4 flex flex-wrap gap-3 items-end shadow-sm">
-  <div class="grow min-w-[200px]">
-    <label class="block text-xs text-slate-500 mb-1">Поиск по предмету</label>
-    <input name="search" value="{{ f.search or '' }}" placeholder="проектная документация…"
-           class="w-full border border-slate-300 rounded px-3 py-1.5 text-sm">
+<form method="get" class="bg-white rounded-lg p-4 mb-4 shadow-sm">
+  <div class="flex flex-wrap gap-3 items-end">
+    <div class="grow min-w-[200px]">
+      <label class="block text-xs text-slate-500 mb-1">Поиск по предмету</label>
+      <input name="search" value="{{ f.search or '' }}" placeholder="проектная документация…"
+             class="w-full border border-slate-300 rounded px-3 py-1.5 text-sm">
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">Вердикт</label>
+      <select name="verdict" class="border border-slate-300 rounded px-2 py-1.5 text-sm">
+        <option value="">все</option>
+        {% for v, label in [('relevant','релевантно'),('maybe','спорно'),('noise','шум')] %}
+        <option value="{{ v }}" {{ 'selected' if f.verdict == v }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {{ sel('law', 'Закон', f.law, facets.laws) }}
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">Регион</label>
+      <select name="region_code" class="border border-slate-300 rounded px-2 py-1.5 text-sm max-w-[160px]">
+        <option value="">все</option>
+        {% for code, name in facets.regions %}
+        <option value="{{ code }}" {{ 'selected' if f.region_code == code }}>{{ code }} {{ name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">Сортировка</label>
+      <select name="sort" class="border border-slate-300 rounded px-2 py-1.5 text-sm">
+        {% for s, label in [('score','по релевантности'),('nmck','по НМЦ'),('deadline','по дедлайну'),('publish','по дате публикации')] %}
+        <option value="{{ s }}" {{ 'selected' if f.sort == s }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="bg-slate-900 text-white rounded px-4 py-1.5 text-sm hover:bg-slate-700">Применить</button>
+    <a href="/" class="text-sm text-slate-500 hover:text-slate-800 py-1.5">сбросить</a>
   </div>
-  <div>
-    <label class="block text-xs text-slate-500 mb-1">Вердикт</label>
-    <select name="verdict" class="border border-slate-300 rounded px-2 py-1.5 text-sm">
-      <option value="">все</option>
-      {% for v, label in [('relevant','релевантно'),('maybe','спорно'),('noise','шум')] %}
-      <option value="{{ v }}" {{ 'selected' if f.verdict == v }}>{{ label }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div>
-    <label class="block text-xs text-slate-500 mb-1">Закон</label>
-    <select name="law" class="border border-slate-300 rounded px-2 py-1.5 text-sm">
-      <option value="">все</option>
-      {% for law in facets.laws %}
-      <option value="{{ law }}" {{ 'selected' if f.law == law }}>{{ law }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div>
-    <label class="block text-xs text-slate-500 mb-1">Регион</label>
-    <select name="region_code" class="border border-slate-300 rounded px-2 py-1.5 text-sm max-w-[160px]">
-      <option value="">все</option>
-      {% for code, name in facets.regions %}
-      <option value="{{ code }}" {{ 'selected' if f.region_code == code }}>{{ code }} {{ name }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div>
-    <label class="block text-xs text-slate-500 mb-1">Сортировка</label>
-    <select name="sort" class="border border-slate-300 rounded px-2 py-1.5 text-sm">
-      {% for s, label in [('score','по релевантности'),('nmck','по НМЦ'),('deadline','по дедлайну'),('publish','по дате публикации')] %}
-      <option value="{{ s }}" {{ 'selected' if f.sort == s }}>{{ label }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <button class="bg-slate-900 text-white rounded px-4 py-1.5 text-sm hover:bg-slate-700">Применить</button>
-  <a href="/" class="text-sm text-slate-500 hover:text-slate-800 py-1.5">сбросить</a>
+
+  <details class="mt-3" {{ 'open' if f.any_advanced() }}>
+    <summary class="text-sm text-slate-600 cursor-pointer select-none">Ещё фильтры</summary>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+      {{ inp('customer', 'Заказчик (название или ИНН)', f.customer, ph='ИНН или название') }}
+      {{ inp('delivery', 'Место поставки', f.delivery) }}
+      {{ sel('purchase_method', 'Способ отбора', f.purchase_method, facets.purchase_methods) }}
+      {{ sel('stage', 'Этап', f.stage, facets.stages) }}
+      {{ sel('etp', 'ЭТП', f.etp, facets.etps) }}
+      {{ sel('smp_sono', 'СМП/СОНО', f.smp_sono, facets.smp_sono) }}
+      {{ sel('decided_by', 'Кто решил', f.decided_by, facets.decided_by) }}
+      {{ sel('currency', 'Валюта', f.currency, facets.currencies) }}
+      {{ sel('source', 'Источник', f.source, facets.sources) }}
+      {{ inp('nmck_min', 'НМЦ от, ₽', f.nmck_min, 'number') }}
+      {{ inp('nmck_max', 'НМЦ до, ₽', f.nmck_max, 'number') }}
+      {{ inp('score_min', 'Score от', f.score_min, 'number') }}
+      {{ inp('score_max', 'Score до', f.score_max, 'number') }}
+      {{ inp('publish_from', 'Опубликовано с', f.publish_from, 'date') }}
+      {{ inp('publish_to', 'Опубликовано по', f.publish_to, 'date') }}
+      {{ inp('deadline_from', 'Дедлайн с', f.deadline_from, 'date') }}
+      {{ inp('deadline_to', 'Дедлайн по', f.deadline_to, 'date') }}
+      <label class="flex items-center gap-2 text-sm self-end pb-1.5">
+        <input type="checkbox" name="has_advance" value="1" {{ 'checked' if f.has_advance }}> С авансом
+      </label>
+    </div>
+  </details>
 </form>
 
 <div class="bg-white rounded-lg shadow-sm overflow-hidden">

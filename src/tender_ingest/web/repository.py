@@ -2,23 +2,61 @@
 
 Только чтение — запись идёт через существующие pipeline/scorer. Джойним tenders с
 tender_relevance (left join: незаскоренные тоже показываем).
+
+Фильтрация — по всем значимым полям: текст (предмет/заказчик/место), селекты
+(закон/регион/способ/этап/ЭТП/СМП/кто-решил/валюта/источник/вердикт), диапазоны
+(НМЦ, score), диапазоны дат (публикация, дедлайн) и флаг аванса.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from sqlalchemy import Select, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy import Select, func, or_, select
+from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from tender_ingest.db.models import Tender, TenderRelevance
 
 _SORTS = {"score", "nmck", "deadline", "publish"}
 _VERDICTS = {"relevant", "maybe", "noise"}
 PAGE_SIZE = 50
+
+
+def _clean(s: str | None) -> str | None:
+    return (s or "").strip() or None
+
+
+def _to_decimal(s: str | None) -> Decimal | None:
+    text = _clean(s)
+    if text is None:
+        return None
+    try:
+        return Decimal(text.replace(" ", "").replace(",", "."))
+    except InvalidOperation:
+        return None
+
+
+def _to_int(s: str | None) -> int | None:
+    text = _clean(s)
+    if text is None:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def _to_date(s: str | None) -> dt.date | None:
+    text = _clean(s)
+    if text is None:
+        return None
+    try:
+        return dt.date.fromisoformat(text)
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -37,30 +75,134 @@ class TenderRow:
     decided_by: str | None
 
 
+# Поля, по которым строится «активность расширенных фильтров» (для раскрытия панели).
+_ADVANCED_FIELDS = (
+    "customer",
+    "delivery",
+    "purchase_method",
+    "stage",
+    "etp",
+    "smp_sono",
+    "decided_by",
+    "currency",
+    "source",
+    "nmck_min",
+    "nmck_max",
+    "score_min",
+    "score_max",
+    "publish_from",
+    "publish_to",
+    "deadline_from",
+    "deadline_to",
+    "has_advance",
+)
+
+
 @dataclass
 class Filters:
+    # текстовый поиск
+    search: str | None = None
+    customer: str | None = None
+    delivery: str | None = None
+    # селекты
     verdict: str | None = None
     law: str | None = None
     region_code: str | None = None
-    search: str | None = None
+    purchase_method: str | None = None
+    stage: str | None = None
+    etp: str | None = None
+    smp_sono: str | None = None
+    decided_by: str | None = None
+    currency: str | None = None
+    source: str | None = None
+    # диапазоны чисел
+    nmck_min: Decimal | None = None
+    nmck_max: Decimal | None = None
+    score_min: int | None = None
+    score_max: int | None = None
+    # диапазоны дат
+    publish_from: dt.date | None = None
+    publish_to: dt.date | None = None
+    deadline_from: dt.date | None = None
+    deadline_to: dt.date | None = None
+    # флаг
+    has_advance: bool = False
+    # навигация
     sort: str = "score"
     page: int = 1
 
-    def normalized(self) -> Filters:
-        return Filters(
-            verdict=self.verdict if self.verdict in _VERDICTS else None,
-            law=self.law or None,
-            region_code=self.region_code or None,
-            search=(self.search or "").strip() or None,
-            sort=self.sort if self.sort in _SORTS else "score",
-            page=max(1, self.page),
+    @classmethod
+    def from_query(  # noqa: PLR0913 — это разбор плоских query-параметров формы
+        cls,
+        *,
+        search: str | None = None,
+        customer: str | None = None,
+        delivery: str | None = None,
+        verdict: str | None = None,
+        law: str | None = None,
+        region_code: str | None = None,
+        purchase_method: str | None = None,
+        stage: str | None = None,
+        etp: str | None = None,
+        smp_sono: str | None = None,
+        decided_by: str | None = None,
+        currency: str | None = None,
+        source: str | None = None,
+        nmck_min: str | None = None,
+        nmck_max: str | None = None,
+        score_min: str | None = None,
+        score_max: str | None = None,
+        publish_from: str | None = None,
+        publish_to: str | None = None,
+        deadline_from: str | None = None,
+        deadline_to: str | None = None,
+        has_advance: str | None = None,
+        sort: str | None = None,
+        page: str | None = None,
+    ) -> Filters:
+        """Прощающий разбор: мусор -> None, без 422 на кривой ввод в форме."""
+        return cls(
+            search=_clean(search),
+            customer=_clean(customer),
+            delivery=_clean(delivery),
+            verdict=verdict if verdict in _VERDICTS else None,
+            law=_clean(law),
+            region_code=_clean(region_code),
+            purchase_method=_clean(purchase_method),
+            stage=_clean(stage),
+            etp=_clean(etp),
+            smp_sono=_clean(smp_sono),
+            decided_by=_clean(decided_by),
+            currency=_clean(currency),
+            source=_clean(source),
+            nmck_min=_to_decimal(nmck_min),
+            nmck_max=_to_decimal(nmck_max),
+            score_min=_to_int(score_min),
+            score_max=_to_int(score_max),
+            publish_from=_to_date(publish_from),
+            publish_to=_to_date(publish_to),
+            deadline_from=_to_date(deadline_from),
+            deadline_to=_to_date(deadline_to),
+            has_advance=_clean(has_advance) is not None,
+            sort=sort if sort in _SORTS else "score",
+            page=max(1, _to_int(page) or 1),
         )
+
+    def any_advanced(self) -> bool:
+        return any(getattr(self, name) for name in _ADVANCED_FIELDS)
 
 
 @dataclass
 class Facets:
     laws: list[str] = field(default_factory=list)
     regions: list[tuple[str, str]] = field(default_factory=list)  # (code, name)
+    purchase_methods: list[str] = field(default_factory=list)
+    stages: list[str] = field(default_factory=list)
+    etps: list[str] = field(default_factory=list)
+    smp_sono: list[str] = field(default_factory=list)
+    decided_by: list[str] = field(default_factory=list)
+    currencies: list[str] = field(default_factory=list)
+    sources: list[str] = field(default_factory=list)
     verdict_counts: dict[str, int] = field(default_factory=dict)
     total: int = 0
 
@@ -70,39 +212,78 @@ class WebRepository:
         self.session = session
 
     def _apply_filters(self, stmt: Select[Any], f: Filters) -> Select[Any]:
+        if f.search:
+            stmt = stmt.where(Tender.subject.ilike(f"%{f.search}%"))
+        if f.customer:
+            like = f"%{f.customer}%"
+            stmt = stmt.where(
+                or_(Tender.customer_name.ilike(like), Tender.customer_inn.ilike(like))
+            )
+        if f.delivery:
+            stmt = stmt.where(Tender.delivery_place.ilike(f"%{f.delivery}%"))
         if f.verdict:
             stmt = stmt.where(TenderRelevance.verdict == f.verdict)
         if f.law:
             stmt = stmt.where(Tender.law == f.law)
         if f.region_code:
             stmt = stmt.where(Tender.region_code == f.region_code)
-        if f.search:
-            stmt = stmt.where(Tender.subject.ilike(f"%{f.search}%"))
+        if f.purchase_method:
+            stmt = stmt.where(Tender.purchase_method == f.purchase_method)
+        if f.stage:
+            stmt = stmt.where(Tender.stage == f.stage)
+        if f.etp:
+            stmt = stmt.where(Tender.etp == f.etp)
+        if f.smp_sono:
+            stmt = stmt.where(Tender.smp_sono == f.smp_sono)
+        if f.decided_by:
+            stmt = stmt.where(TenderRelevance.decided_by == f.decided_by)
+        if f.currency:
+            stmt = stmt.where(Tender.currency == f.currency)
+        if f.source:
+            stmt = stmt.where(Tender.source == f.source)
+        if f.nmck_min is not None:
+            stmt = stmt.where(Tender.nmck >= f.nmck_min)
+        if f.nmck_max is not None:
+            stmt = stmt.where(Tender.nmck <= f.nmck_max)
+        if f.score_min is not None:
+            stmt = stmt.where(TenderRelevance.score >= f.score_min)
+        if f.score_max is not None:
+            stmt = stmt.where(TenderRelevance.score <= f.score_max)
+        if f.publish_from is not None:
+            stmt = stmt.where(Tender.publish_date >= f.publish_from)
+        if f.publish_to is not None:
+            stmt = stmt.where(Tender.publish_date < f.publish_to + dt.timedelta(days=1))
+        if f.deadline_from is not None:
+            stmt = stmt.where(Tender.submission_deadline >= f.deadline_from)
+        if f.deadline_to is not None:
+            stmt = stmt.where(Tender.submission_deadline < f.deadline_to + dt.timedelta(days=1))
+        if f.has_advance:
+            stmt = stmt.where(Tender.advance_raw.is_not(None))
         return stmt
 
-    def list_tenders(self, f: Filters) -> tuple[list[TenderRow], int]:
-        f = f.normalized()
-        base = select(Tender, TenderRelevance).join(
+    def _joined(self, *entities: Any) -> Select[Any]:
+        return select(*entities).join(
             TenderRelevance,
             TenderRelevance.reestr_number == Tender.reestr_number,
             isouter=True,
         )
-        base = self._apply_filters(base, f)
 
-        count_stmt = self._apply_filters(
-            select(func.count())
-            .select_from(Tender)
-            .join(
-                TenderRelevance,
-                TenderRelevance.reestr_number == Tender.reestr_number,
-                isouter=True,
-            ),
-            f,
-        )
-        total = self.session.execute(count_stmt).scalar_one()
+    def list_tenders(self, f: Filters) -> tuple[list[TenderRow], int]:
+        total = self.session.execute(
+            self._apply_filters(
+                select(func.count())
+                .select_from(Tender)
+                .join(
+                    TenderRelevance,
+                    TenderRelevance.reestr_number == Tender.reestr_number,
+                    isouter=True,
+                ),
+                f,
+            )
+        ).scalar_one()
 
-        stmt = base.order_by(*self._order(f.sort))
-        stmt = stmt.limit(PAGE_SIZE).offset((f.page - 1) * PAGE_SIZE)
+        stmt = self._apply_filters(self._joined(Tender, TenderRelevance), f)
+        stmt = stmt.order_by(*self._order(f.sort)).limit(PAGE_SIZE).offset((f.page - 1) * PAGE_SIZE)
 
         rows: list[TenderRow] = []
         for tender, rel in self.session.execute(stmt).all():
@@ -137,25 +318,21 @@ class WebRepository:
 
     def get(self, reestr_number: str) -> tuple[Tender, TenderRelevance | None] | None:
         row = self.session.execute(
-            select(Tender, TenderRelevance)
-            .join(
-                TenderRelevance,
-                TenderRelevance.reestr_number == Tender.reestr_number,
-                isouter=True,
-            )
-            .where(Tender.reestr_number == reestr_number)
+            self._joined(Tender, TenderRelevance).where(Tender.reestr_number == reestr_number)
         ).first()
         if row is None:
             return None
         return (row[0], row[1])
 
-    def facets(self) -> Facets:
-        laws = [
+    def _distinct(self, column: InstrumentedAttribute[Any]) -> list[str]:
+        return [
             r[0]
             for r in self.session.execute(
-                select(Tender.law).where(Tender.law.is_not(None)).distinct().order_by(Tender.law)
+                select(column).where(column.is_not(None)).distinct().order_by(column)
             ).all()
         ]
+
+    def facets(self) -> Facets:
         regions = [
             (r[0], r[1])
             for r in self.session.execute(
@@ -172,4 +349,16 @@ class WebRepository:
             ).all()
         }
         total = self.session.execute(select(func.count()).select_from(Tender)).scalar_one()
-        return Facets(laws=laws, regions=regions, verdict_counts=verdict_counts, total=total)
+        return Facets(
+            laws=self._distinct(Tender.law),
+            regions=regions,
+            purchase_methods=self._distinct(Tender.purchase_method),
+            stages=self._distinct(Tender.stage),
+            etps=self._distinct(Tender.etp),
+            smp_sono=self._distinct(Tender.smp_sono),
+            decided_by=self._distinct(TenderRelevance.decided_by),
+            currencies=self._distinct(Tender.currency),
+            sources=self._distinct(Tender.source),
+            verdict_counts=verdict_counts,
+            total=total,
+        )

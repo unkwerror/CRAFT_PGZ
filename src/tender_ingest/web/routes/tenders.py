@@ -14,18 +14,59 @@ router = APIRouter(dependencies=[Depends(require_auth)])
 
 
 @router.get("/", response_class=HTMLResponse)
-def index(
+def index(  # noqa: PLR0913 — плоский разбор query-параметров формы фильтров
     request: Request,
+    search: str | None = None,
+    customer: str | None = None,
+    delivery: str | None = None,
     verdict: str | None = None,
     law: str | None = None,
     region_code: str | None = None,
-    search: str | None = None,
-    sort: str = "score",
-    page: int = 1,
+    purchase_method: str | None = None,
+    stage: str | None = None,
+    etp: str | None = None,
+    smp_sono: str | None = None,
+    decided_by: str | None = None,
+    currency: str | None = None,
+    source: str | None = None,
+    nmck_min: str | None = None,
+    nmck_max: str | None = None,
+    score_min: str | None = None,
+    score_max: str | None = None,
+    publish_from: str | None = None,
+    publish_to: str | None = None,
+    deadline_from: str | None = None,
+    deadline_to: str | None = None,
+    has_advance: str | None = None,
+    sort: str | None = None,
+    page: str | None = None,
 ) -> HTMLResponse:
-    f = Filters(
-        verdict=verdict, law=law, region_code=region_code, search=search, sort=sort, page=page
-    ).normalized()
+    f = Filters.from_query(
+        search=search,
+        customer=customer,
+        delivery=delivery,
+        verdict=verdict,
+        law=law,
+        region_code=region_code,
+        purchase_method=purchase_method,
+        stage=stage,
+        etp=etp,
+        smp_sono=smp_sono,
+        decided_by=decided_by,
+        currency=currency,
+        source=source,
+        nmck_min=nmck_min,
+        nmck_max=nmck_max,
+        score_min=score_min,
+        score_max=score_max,
+        publish_from=publish_from,
+        publish_to=publish_to,
+        deadline_from=deadline_from,
+        deadline_to=deadline_to,
+        has_advance=has_advance,
+        sort=sort,
+        page=page,
+    )
     with get_session_factory()() as session:
         repo = WebRepository(session)
         rows, total = repo.list_tenders(f)

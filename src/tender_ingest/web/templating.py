@@ -36,12 +36,30 @@ def date_ru(value: dt.datetime | None, with_time: bool = False) -> str:
 
 
 def qs(f: Filters, **overrides: object) -> str:
-    """Query-строка из текущих фильтров с переопределениями (для пагинации/сортировки)."""
+    """Query-строка из всех текущих фильтров с переопределениями (пагинация/сортировка)."""
     params: dict[str, object] = {
+        "search": f.search,
+        "customer": f.customer,
+        "delivery": f.delivery,
         "verdict": f.verdict,
         "law": f.law,
         "region_code": f.region_code,
-        "search": f.search,
+        "purchase_method": f.purchase_method,
+        "stage": f.stage,
+        "etp": f.etp,
+        "smp_sono": f.smp_sono,
+        "decided_by": f.decided_by,
+        "currency": f.currency,
+        "source": f.source,
+        "nmck_min": f.nmck_min,
+        "nmck_max": f.nmck_max,
+        "score_min": f.score_min,
+        "score_max": f.score_max,
+        "publish_from": f.publish_from,
+        "publish_to": f.publish_to,
+        "deadline_from": f.deadline_from,
+        "deadline_to": f.deadline_to,
+        "has_advance": "1" if f.has_advance else None,
         "sort": f.sort,
         "page": f.page,
     }

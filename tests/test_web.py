@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+import datetime as dt
+from decimal import Decimal
+
 from fastapi.testclient import TestClient
 
 from tender_ingest.web.app import app
@@ -53,9 +56,28 @@ def test_check_password() -> None:
     assert check_password("anything", "") is False  # пустой ожидаемый -> отказ
 
 
-def test_filters_normalized_drops_garbage() -> None:
-    f = Filters(verdict="bogus", sort="bogus", search="  ", page=-5).normalized()
+def test_filters_from_query_cleans_garbage() -> None:
+    f = Filters.from_query(verdict="bogus", sort="bogus", search="  ", page="-5")
     assert f.verdict is None
     assert f.sort == "score"
     assert f.search is None
     assert f.page == 1
+    assert f.any_advanced() is False
+
+
+def test_filters_from_query_parses_ranges_dates_flag() -> None:
+    f = Filters.from_query(
+        nmck_min="1 000 000",
+        score_min="35",
+        publish_from="2026-06-01",
+        deadline_to="не-дата",
+        has_advance="1",
+        customer=" ООО Ромашка ",
+    )
+    assert f.nmck_min == Decimal("1000000")
+    assert f.score_min == 35
+    assert f.publish_from == dt.date(2026, 6, 1)
+    assert f.deadline_to is None  # кривая дата -> None, без 422
+    assert f.has_advance is True
+    assert f.customer == "ООО Ромашка"
+    assert f.any_advanced() is True
