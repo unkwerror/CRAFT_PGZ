@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% from "_macros.html" import verdict_badge, score_pill %}
+{% block title %}{{ (t.subject or t.reestr_number)[:60] }}{% endblock %}
+{% block content %}
+
+<a href="javascript:history.back()" class="text-sm text-slate-500 hover:text-slate-800">← к списку</a>
+
+<div class="bg-white rounded-lg shadow-sm p-6 mt-3">
+  <h1 class="text-lg font-semibold leading-snug">{{ t.subject or '(без названия)' }}</h1>
+  <div class="text-sm text-slate-400 mt-1">
+    № {{ t.reestr_number }} · {{ t.law or '—' }} ·
+    <a href="https://zakupki.gov.ru/epz/order/extendedsearch/results.html?searchString={{ t.reestr_number }}"
+       target="_blank" rel="noopener" class="text-slate-500 hover:underline">открыть в ЕИС ↗</a>
+  </div>
+</div>
+
+{% if rel %}
+<div class="bg-white rounded-lg shadow-sm p-6 mt-4">
+  <div class="flex items-center gap-3 mb-3">
+    {{ score_pill(rel.score) }}
+    {{ verdict_badge(rel.verdict) }}
+    <span class="text-xs text-slate-400">решено: {{ rel.decided_by }}</span>
+  </div>
+  {% if rel.matched %}
+  <div class="flex flex-wrap gap-1.5 mb-2">
+    {% for m in rel.matched %}
+    <span class="px-2 py-0.5 rounded text-xs bg-emerald-50 text-emerald-700 border border-emerald-200">+{{ m.weight }} {{ m.label }}</span>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if rel.anti_matched %}
+  <div class="flex flex-wrap gap-1.5 mb-2">
+    {% for m in rel.anti_matched %}
+    <span class="px-2 py-0.5 rounded text-xs bg-red-50 text-red-700 border border-red-200">−{{ m.weight }} {{ m.label }}</span>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if rel.llm_reason %}<p class="text-sm text-slate-500 mt-1">{{ rel.llm_reason }}</p>{% endif %}
+</div>
+{% endif %}
+
+<div class="grid md:grid-cols-2 gap-4 mt-4">
+  <div class="bg-white rounded-lg shadow-sm p-6">
+    <h2 class="text-sm font-semibold text-slate-500 mb-3">Закупка</h2>
+    <dl class="text-sm space-y-1.5">
+      {% macro row(k, v) %}<div class="flex justify-between gap-4"><dt class="text-slate-500">{{ k }}</dt><dd class="text-right">{{ v }}</dd></div>{% endmacro %}
+      {{ row('НМЦ', t.nmck | money(t.currency)) }}
+      {{ row('Способ отбора', t.purchase_method or '—') }}
+      {{ row('Этап', t.stage or '—') }}
+      {{ row('ЭТП', t.etp or '—') }}
+      {{ row('СМП/СОНО', t.smp_sono or '—') }}
+      {{ row('Аванс', t.advance_raw or '—') }}
+      {{ row('Опубликовано', t.publish_date | date_ru(true)) }}
+      {{ row('Дедлайн заявок', t.submission_deadline | date_ru(true)) }}
+    </dl>
+  </div>
+  <div class="bg-white rounded-lg shadow-sm p-6">
+    <h2 class="text-sm font-semibold text-slate-500 mb-3">Заказчик</h2>
+    <dl class="text-sm space-y-1.5">
+      {{ row('Название', t.customer_name or '—') }}
+      {{ row('ИНН', t.customer_inn or '—') }}
+      {{ row('КПП', t.customer_kpp or '—') }}
+      {{ row('Регион', (t.region_code or '') ~ ' ' ~ (t.region_name or '')) }}
+      {{ row('Место поставки', t.delivery_place or '—') }}
+    </dl>
+  </div>
+</div>
+
+{% set sec_labels = {'bid':'Обеспечение заявки','contract':'Обеспечение контракта','supply':'Обеспечение поставки','maintenance':'Обеспечение обслуживания','warranty':'Гарантийные обязательства'} %}
+{% set has_sec = t.securities and t.securities.values() | selectattr('raw') | list %}
+{% if has_sec %}
+<div class="bg-white rounded-lg shadow-sm p-6 mt-4">
+  <h2 class="text-sm font-semibold text-slate-500 mb-3">Обеспечения</h2>
+  <table class="w-full text-sm">
+    <tbody class="divide-y divide-slate-100">
+      {% for key, label in sec_labels.items() %}
+      {% set s = t.securities.get(key) %}
+      {% if s and s.raw %}
+      <tr>
+        <td class="py-1.5 text-slate-500">{{ label }}</td>
+        <td class="py-1.5 text-right">
+          {% if s.amount_rub %}{{ s.amount_rub | money('RUB') }}{% elif s.percent %}{{ s.percent }} %{% else %}{{ s.raw }}{% endif %}
+        </td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% endblock %}

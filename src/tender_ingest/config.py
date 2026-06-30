@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     yandex_api_key: str = ""
     yandex_folder_id: str = ""
 
+    # Веб-интерфейс (Фаза 2). Общий пароль на бюро + секрет подписи сессии-cookie.
+    # В проде ОБЯЗАТЕЛЬНО задать через .env (дефолты — только для локалки).
+    web_password: str = "craft"
+    session_secret: str = "dev-insecure-change-me"
+    max_upload_mb: int = 20  # лимит размера загружаемого .xlsx
+
 
 @lru_cache
 def get_settings() -> Settings:

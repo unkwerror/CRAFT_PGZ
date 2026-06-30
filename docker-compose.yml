@@ -28,5 +28,18 @@ services:
     # (смонтируй каталог с файлом в /data при необходимости).
     command: ["tender", "--help"]
 
+  web:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Только localhost — наружу проксирует nginx (TLS терминируется на нём).
+    ports:
+      - "127.0.0.1:8000:8000"
+    command:
+      ["uvicorn", "tender_ingest.web.app:app", "--host", "0.0.0.0", "--port", "8000"]
+
 volumes:
   pgdata:

@@ -1,0 +1,20 @@
+{% macro verdict_badge(verdict) %}
+  {% set styles = {
+    'relevant': 'bg-emerald-100 text-emerald-800',
+    'maybe':    'bg-amber-100 text-amber-800',
+    'noise':    'bg-slate-200 text-slate-600'
+  } %}
+  {% set labels = {'relevant': 'релевантно', 'maybe': 'спорно', 'noise': 'шум'} %}
+  <span class="px-2 py-0.5 rounded text-xs font-medium {{ styles.get(verdict, 'bg-slate-100 text-slate-500') }}">
+    {{ labels.get(verdict, '—') }}
+  </span>
+{% endmacro %}
+
+{% macro score_pill(score) %}
+  {% if score is none %}
+    <span class="text-slate-400 text-sm">—</span>
+  {% else %}
+    {% set color = 'bg-emerald-600' if score >= 35 else ('bg-amber-500' if score > 5 else 'bg-slate-400') %}
+    <span class="inline-flex items-center justify-center w-10 h-7 rounded text-white text-sm font-semibold {{ color }}">{{ score }}</span>
+  {% endif %}
+{% endmacro %}

@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Не найдено{% endblock %}
+{% block content %}
+<div class="bg-white rounded-lg shadow-sm p-8 text-center">
+  <p class="text-slate-600">Закупка <b>{{ reestr_number }}</b> не найдена.</p>
+  <a href="/" class="text-sm text-slate-500 hover:underline mt-2 inline-block">← к списку</a>
+</div>
+{% endblock %}

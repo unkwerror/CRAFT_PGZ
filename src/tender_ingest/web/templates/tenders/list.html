@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% from "_macros.html" import verdict_badge, score_pill %}
+{% block title %}Закупки — {{ total }}{% endblock %}
+{% block content %}
+
+<div class="flex items-baseline justify-between mb-4">
+  <h1 class="text-xl font-semibold">Закупки</h1>
+  <div class="text-sm text-slate-500">
+    Всего: {{ facets.total }} ·
+    <span class="text-emerald-700">релевантных {{ facets.verdict_counts.get('relevant', 0) }}</span> ·
+    спорных {{ facets.verdict_counts.get('maybe', 0) }} ·
+    шум {{ facets.verdict_counts.get('noise', 0) }}
+  </div>
+</div>
+
+<form method="get" class="bg-white rounded-lg p-4 mb-4 flex flex-wrap gap-3 items-end shadow-sm">
+  <div class="grow min-w-[200px]">
+    <label class="block text-xs text-slate-500 mb-1">Поиск по предмету</label>
+    <input name="search" value="{{ f.search or '' }}" placeholder="проектная документация…"
+           class="w-full border border-slate-300 rounded px-3 py-1.5 text-sm">
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Вердикт</label>
+    <select name="verdict" class="border border-slate-300 rounded px-2 py-1.5 text-sm">
+      <option value="">все</option>
+      {% for v, label in [('relevant','релевантно'),('maybe','спорно'),('noise','шум')] %}
+      <option value="{{ v }}" {{ 'selected' if f.verdict == v }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Закон</label>
+    <select name="law" class="border border-slate-300 rounded px-2 py-1.5 text-sm">
+      <option value="">все</option>
+      {% for law in facets.laws %}
+      <option value="{{ law }}" {{ 'selected' if f.law == law }}>{{ law }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Регион</label>
+    <select name="region_code" class="border border-slate-300 rounded px-2 py-1.5 text-sm max-w-[160px]">
+      <option value="">все</option>
+      {% for code, name in facets.regions %}
+      <option value="{{ code }}" {{ 'selected' if f.region_code == code }}>{{ code }} {{ name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Сортировка</label>
+    <select name="sort" class="border border-slate-300 rounded px-2 py-1.5 text-sm">
+      {% for s, label in [('score','по релевантности'),('nmck','по НМЦ'),('deadline','по дедлайну'),('publish','по дате публикации')] %}
+      <option value="{{ s }}" {{ 'selected' if f.sort == s }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <button class="bg-slate-900 text-white rounded px-4 py-1.5 text-sm hover:bg-slate-700">Применить</button>
+  <a href="/" class="text-sm text-slate-500 hover:text-slate-800 py-1.5">сбросить</a>
+</form>
+
+<div class="bg-white rounded-lg shadow-sm overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-slate-50 text-slate-500 text-left">
+      <tr>
+        <th class="px-3 py-2 w-14">Score</th>
+        <th class="px-3 py-2">Предмет</th>
+        <th class="px-3 py-2 w-32 text-right">НМЦ</th>
+        <th class="px-3 py-2 w-20">Закон</th>
+        <th class="px-3 py-2 w-40">Регион</th>
+        <th class="px-3 py-2 w-28">Дедлайн</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for r in rows %}
+      <tr class="hover:bg-slate-50">
+        <td class="px-3 py-2">{{ score_pill(r.score) }}</td>
+        <td class="px-3 py-2">
+          <a href="/tender/{{ r.reestr_number }}" class="text-slate-900 hover:underline line-clamp-2">
+            {{ r.subject or '(без названия)' }}
+          </a>
+          <div class="text-xs text-slate-400 mt-0.5">
+            {{ r.reestr_number }} · {{ r.etp or '—' }} · {{ verdict_badge(r.verdict) }}
+          </div>
+        </td>
+        <td class="px-3 py-2 text-right whitespace-nowrap">{{ r.nmck | money(r.currency) }}</td>
+        <td class="px-3 py-2">{{ r.law or '—' }}</td>
+        <td class="px-3 py-2 text-slate-600">{{ r.region_code or '' }} {{ r.region_name or '' }}</td>
+        <td class="px-3 py-2 whitespace-nowrap">{{ r.submission_deadline | date_ru }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="px-3 py-8 text-center text-slate-400">Ничего не найдено</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_pages > 1 %}
+<div class="flex items-center justify-between mt-4 text-sm">
+  <div class="text-slate-500">Страница {{ page }} из {{ total_pages }}</div>
+  <div class="flex gap-2">
+    {% if page > 1 %}<a href="/?{{ qs(f, page=page-1) }}" class="px-3 py-1 bg-white border border-slate-300 rounded hover:bg-slate-50">← Назад</a>{% endif %}
+    {% if page < total_pages %}<a href="/?{{ qs(f, page=page+1) }}" class="px-3 py-1 bg-white border border-slate-300 rounded hover:bg-slate-50">Вперёд →</a>{% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

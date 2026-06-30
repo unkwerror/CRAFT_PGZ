@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Загрузить выгрузку{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-4">Загрузить выгрузку Контур.Закупок</h1>
+
+<div class="bg-white rounded-lg shadow-sm p-6 max-w-xl">
+  {% if error %}
+  <div class="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">{{ error }}</div>
+  {% endif %}
+
+  {% if result %}
+  <div class="mb-4 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded px-3 py-3">
+    <div class="font-medium mb-1">Готово: {{ result.filename }}</div>
+    Загружено строк: <b>{{ result.ingest.rows_total }}</b>,
+    сохранено: <b>{{ result.ingest.tenders_upserted }}</b>,
+    ошибок: {{ result.ingest.parse_failures }}.<br>
+    Оценено: <b>{{ result.scored.total }}</b> →
+    релевантных {{ result.scored.relevant }},
+    спорных к арбитру {{ result.scored.maybe_sent_to_llm }},
+    шум {{ result.scored.noise }}.
+    <a href="/" class="underline ml-1">смотреть список</a>
+  </div>
+  {% endif %}
+
+  <form action="/upload" method="post" enctype="multipart/form-data">
+    <input type="file" name="file" accept=".xlsx" required
+           class="block w-full text-sm mb-4 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-slate-900 file:text-white hover:file:bg-slate-700">
+    <button class="bg-slate-900 text-white rounded px-4 py-2 text-sm hover:bg-slate-700">Загрузить и оценить</button>
+  </form>
+  <p class="text-xs text-slate-400 mt-3">
+    Поддерживается .xlsx из Контур.Закупок («Выгрузить в Excel»). Повторная загрузка
+    обновляет существующие закупки и добавляет новые — дубли не плодятся.
+  </p>
+</div>
+{% endblock %}
