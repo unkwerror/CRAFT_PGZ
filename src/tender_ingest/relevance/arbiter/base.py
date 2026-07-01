@@ -14,7 +14,7 @@ class ArbiterVerdict(BaseModel):
 
 
 class RelevanceArbiter(ABC):
-    """Адаптер LLM-арбитра. Реализации: MockArbiter (dev), YandexGPTArbiter (prod)."""
+    """Интерфейс LLM-арбитра релевантности. Реализация: ClaudeArbiter."""
 
     provider: str
 

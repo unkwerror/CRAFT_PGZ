@@ -24,10 +24,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://tender:tender@localhost:5432/tender"
     log_level: str = "INFO"
 
-    # LLM-арбитр релевантности (Фаза 1). По умолчанию mock — без ключа и сети.
-    arbiter_provider: str = "mock"  # mock | yandex
-    yandex_api_key: str = ""
-    yandex_folder_id: str = ""
+    # LLM-арбитр релевантности (Claude / Anthropic API). Ключ обязателен для скоринга.
+    anthropic_api_key: str = ""
+    claude_model: str = "claude-opus-4-8"
 
     # Веб-интерфейс (Фаза 2). Общий пароль на бюро + секрет подписи сессии-cookie.
     # В проде ОБЯЗАТЕЛЬНО задать через .env (дефолты — только для локалки).

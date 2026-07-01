@@ -11,7 +11,7 @@
 Контур → .xlsx → ExcelSource → нормализация → Postgres → analysis_queue
                                                               ↓
                                   правила (score) ──relevant/noise──→ tender_relevance
-                                       └─ maybe ─→ LLM-арбитр (mock|yandex) ─→ tender_relevance
+                                       └─ maybe ─→ LLM-арбитр (Claude) ─→ tender_relevance
 ```
 
 Границы фаз — в [`CLAUDE.md`](./CLAUDE.md). Архитектура (адаптеры источника и
@@ -25,7 +25,7 @@
 - `sources/` — `SourceAdapter.fetch() -> Iterable[RawTender]`; v1 — `ExcelSource`.
   Pipeline работает только с `RawTender`, про Excel не знает.
 - `relevance/arbiter/` — `RelevanceArbiter.decide(subject) -> ArbiterVerdict`;
-  `MockArbiter` (по умолчанию, без ключа) и `YandexGPTArbiter` (prod).
+  реализация `ClaudeArbiter` (Anthropic API), нужен `ANTHROPIC_API_KEY`.
 
 Модули:
 
@@ -40,7 +40,7 @@
 ## Быстрый старт
 
 ```bash
-cp .env.example .env           # источник v1 без секретов; арбитр по умолчанию mock
+cp .env.example .env           # впиши ANTHROPIC_API_KEY (нужен для скоринга)
 docker compose up -d postgres  # поднять БД
 
 python -m venv .venv && . .venv/bin/activate
@@ -65,15 +65,13 @@ tender score
 (upsert по `reestr_number`); `score` берёт только закупки со статусом `pending` в
 очереди и переводит их в `scored`.
 
-### LLM-арбитр
+### LLM-арбитр (Claude)
 
-По умолчанию `ARBITER_PROVIDER=mock` — детерминированная заглушка без ключа и сети
-(годится для разработки и тестов). Для боевого арбитра на YandexGPT:
+Спорные (maybe) закупки решает Claude (Anthropic API). Ключ обязателен:
 
 ```env
-ARBITER_PROVIDER=yandex
-YANDEX_API_KEY=...
-YANDEX_FOLDER_ID=...
+ANTHROPIC_API_KEY=sk-ant-...
+CLAUDE_MODEL=claude-opus-4-8   # дешевле для классификации: claude-haiku-4-5
 ```
 
 Арбитр вызывается **только** на спорных (maybe) закупках — это экономит вызовы.
@@ -86,7 +84,7 @@ YANDEX_FOLDER_ID=...
 | `tenders` | нормализованная закупка (PK `reestr_number`); обеспечения и результат — JSONB |
 | `tender_raw` | сырьё строки целиком (JSONB) — ничего не теряем при смене формата |
 | `analysis_queue` | очередь: `pending` → `scored` |
-| `tender_relevance` | `score`, `verdict`, `decided_by` (rules/mock/yandex), `matched`, `llm_reason` |
+| `tender_relevance` | `score`, `verdict`, `decided_by` (rules/claude), `matched`, `llm_reason` |
 | `ingestion_runs` | журнал прогонов: файл, строк, upsert, ошибок, статус |
 
 Прозрачность: по каждой закупке видно `score`, какие слова сработали (`matched`/
@@ -111,7 +109,7 @@ SAVEPOINT на строку).
 | Фаза | Что | Статус |
 |---|---|---|
 | 0 | Приём Excel: парсер, нормализация, БД, идемпотентный upsert, CLI `ingest` | ✅ |
-| 1 | Релевантность: правила + LLM-арбитр (mock/yandex), CLI `score` | ✅ |
+| 1 | Релевантность: правила + LLM-арбитр (Claude), CLI `score` | ✅ |
 | — | Карточка закупки (LLM), скоринг участия | следующая фаза |
 | — | Веб-интерфейс (2–5 пользователей бюро, общая БД) | следующая фаза |
 | — | Источники Email/DaMIA/ЕИС, документы (ТЗ) | следующие фазы |

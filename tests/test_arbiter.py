@@ -1,38 +1,20 @@
+import pytest
+
 from tender_ingest.config import Settings
 from tender_ingest.relevance.arbiter import create_arbiter
-from tender_ingest.relevance.arbiter.mock import MockArbiter
+from tender_ingest.relevance.arbiter.claude import ClaudeArbiter
 from tender_ingest.relevance.arbiter.prompt import parse_response
 
 
-def test_factory_defaults_to_mock() -> None:
-    arb = create_arbiter(Settings(arbiter_provider="mock"))
-    assert isinstance(arb, MockArbiter)
-    assert arb.provider == "mock"
-
-
-def test_mock_decides_relevant_on_design_signal() -> None:
-    v = MockArbiter().decide("Корректировка проектной документации")
-    assert v.relevant is True
-    assert v.provider == "mock"
-
-
-def test_mock_decides_not_relevant_without_signal() -> None:
-    v = MockArbiter().decide("Поставка канцелярских товаров")
-    assert v.relevant is False
-
-
-def test_yandex_requires_keys() -> None:
-    import pytest
-
+def test_requires_api_key() -> None:
     with pytest.raises(ValueError):
-        create_arbiter(Settings(arbiter_provider="yandex"))
+        create_arbiter(Settings(anthropic_api_key=""))
 
 
-def test_unknown_provider_raises() -> None:
-    import pytest
-
-    with pytest.raises(ValueError):
-        create_arbiter(Settings(arbiter_provider="gigachat"))
+def test_factory_builds_claude() -> None:
+    arb = create_arbiter(Settings(anthropic_api_key="sk-test"))
+    assert isinstance(arb, ClaudeArbiter)
+    assert arb.provider == "claude"
 
 
 def test_parse_response() -> None:
