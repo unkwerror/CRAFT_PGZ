@@ -27,7 +27,7 @@ def create_app() -> FastAPI:
         secret_key=settings.session_secret,
         session_cookie="craft_session",
         same_site="lax",
-        https_only=False,  # за nginx; TLS терминируется на проксе
+        https_only=settings.session_https_only,  # в проде true — cookie только по HTTPS
         max_age=14 * 24 * 3600,
     )
 

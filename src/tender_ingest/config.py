@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     # В проде ОБЯЗАТЕЛЬНО задать через .env (дефолты — только для локалки).
     web_password: str = "craft"
     session_secret: str = "dev-insecure-change-me"
+    session_https_only: bool = False  # в проде за HTTPS -> true (cookie только по TLS)
     max_upload_mb: int = 20  # лимит размера загружаемого .xlsx
 
 
