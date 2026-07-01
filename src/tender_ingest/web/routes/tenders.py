@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
 
 from tender_ingest.db.session import get_session_factory
@@ -17,13 +19,15 @@ router = APIRouter(dependencies=[Depends(require_auth)])
 def index(  # noqa: PLR0913 — плоский разбор query-параметров формы фильтров
     request: Request,
     search: str | None = None,
+    exact: str | None = None,
+    exclude: str | None = None,
     customer: str | None = None,
     delivery: str | None = None,
+    laws: Annotated[list[str] | None, Query()] = None,
+    stages: Annotated[list[str] | None, Query()] = None,
     verdict: str | None = None,
-    law: str | None = None,
     region_code: str | None = None,
     purchase_method: str | None = None,
-    stage: str | None = None,
     etp: str | None = None,
     smp_sono: str | None = None,
     decided_by: str | None = None,
@@ -31,25 +35,34 @@ def index(  # noqa: PLR0913 — плоский разбор query-парамет
     source: str | None = None,
     nmck_min: str | None = None,
     nmck_max: str | None = None,
+    nmck_none: str | None = None,
+    bid_min: str | None = None,
+    bid_max: str | None = None,
+    bid_none: str | None = None,
+    contract_min: str | None = None,
+    contract_max: str | None = None,
+    contract_none: str | None = None,
+    advance: str | None = None,
     score_min: str | None = None,
     score_max: str | None = None,
     publish_from: str | None = None,
     publish_to: str | None = None,
     deadline_from: str | None = None,
     deadline_to: str | None = None,
-    has_advance: str | None = None,
     sort: str | None = None,
     page: str | None = None,
 ) -> HTMLResponse:
     f = Filters.from_query(
         search=search,
+        exact=exact,
+        exclude=exclude,
         customer=customer,
         delivery=delivery,
+        laws=laws,
+        stages=stages,
         verdict=verdict,
-        law=law,
         region_code=region_code,
         purchase_method=purchase_method,
-        stage=stage,
         etp=etp,
         smp_sono=smp_sono,
         decided_by=decided_by,
@@ -57,13 +70,20 @@ def index(  # noqa: PLR0913 — плоский разбор query-парамет
         source=source,
         nmck_min=nmck_min,
         nmck_max=nmck_max,
+        nmck_none=nmck_none,
+        bid_min=bid_min,
+        bid_max=bid_max,
+        bid_none=bid_none,
+        contract_min=contract_min,
+        contract_max=contract_max,
+        contract_none=contract_none,
+        advance=advance,
         score_min=score_min,
         score_max=score_max,
         publish_from=publish_from,
         publish_to=publish_to,
         deadline_from=deadline_from,
         deadline_to=deadline_to,
-        has_advance=has_advance,
         sort=sort,
         page=page,
     )

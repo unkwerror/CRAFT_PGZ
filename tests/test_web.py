@@ -65,19 +65,31 @@ def test_filters_from_query_cleans_garbage() -> None:
     assert f.any_advanced() is False
 
 
-def test_filters_from_query_parses_ranges_dates_flag() -> None:
+def test_filters_from_query_parses_ranges_dates_multi() -> None:
     f = Filters.from_query(
+        search="проектная документация",
+        exclude=" поставка аренда ",
+        laws=["44-ФЗ", "223-ФЗ", "  "],
         nmck_min="1 000 000",
-        score_min="35",
+        bid_min="50000",
+        advance="with",
+        nmck_none="1",
         publish_from="2026-06-01",
         deadline_to="не-дата",
-        has_advance="1",
         customer=" ООО Ромашка ",
     )
     assert f.nmck_min == Decimal("1000000")
-    assert f.score_min == 35
+    assert f.bid_min == Decimal("50000")
+    assert f.laws == ["44-ФЗ", "223-ФЗ"]  # пустое отброшено
+    assert f.exclude == "поставка аренда"
+    assert f.advance == "with"
+    assert f.nmck_none is True
     assert f.publish_from == dt.date(2026, 6, 1)
     assert f.deadline_to is None  # кривая дата -> None, без 422
-    assert f.has_advance is True
     assert f.customer == "ООО Ромашка"
     assert f.any_advanced() is True
+
+
+def test_filters_advance_invalid_dropped() -> None:
+    assert Filters.from_query(advance="bogus").advance is None
+    assert Filters.from_query(laws=[]).any_advanced() is False
