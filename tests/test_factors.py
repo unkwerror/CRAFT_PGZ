@@ -1,7 +1,7 @@
 from decimal import Decimal
 from types import SimpleNamespace
 
-from tender_ingest.relevance.factors import compute_factors, hard_exclusion
+from tender_ingest.relevance.factors import compute_factors, hard_exclusion, is_auction
 from tender_ingest.relevance.scorer import verdict_from_score
 
 
@@ -30,10 +30,11 @@ def test_ideal_card_factors() -> None:
     assert hard_exclusion(f) is None
 
 
-def test_auction_hard_excluded() -> None:
+def test_auction_is_soft_not_hard() -> None:
     f = compute_factors(_card(purchase_method="Электронный аукцион"))
     assert f.method_kind == "аукцион"
-    assert hard_exclusion(f) == "электронный аукцион — не наш формат"
+    assert is_auction(f) is True
+    assert hard_exclusion(f) is None  # аукцион не жёсткое исключение (мягко откладываем)
 
 
 def test_excluded_customer() -> None:
@@ -41,17 +42,22 @@ def test_excluded_customer() -> None:
     assert hard_exclusion(compute_factors(_card(customer_name="АО «ЕЭСК»"))) is not None
 
 
-def test_sng_and_inactive_stage() -> None:
-    assert hard_exclusion(compute_factors(_card(law="Закупки СНГ"))) is not None
+def test_inactive_stage_hard_excluded() -> None:
     assert "этап" in (hard_exclusion(compute_factors(_card(stage="Работа комиссии"))) or "")
+    assert hard_exclusion(compute_factors(_card(stage="Подача заявок"))) is None
+
+
+def test_nmck_hard_bounds() -> None:
+    assert hard_exclusion(compute_factors(_card(nmck=Decimal("1000000")))) is not None  # < 1.5 млн
+    assert (
+        hard_exclusion(compute_factors(_card(nmck=Decimal("200000000")))) is not None
+    )  # > 180 млн
+    assert hard_exclusion(compute_factors(_card(nmck=Decimal("8000000")))) is None  # в норме
 
 
 def test_price_band_and_region() -> None:
-    assert compute_factors(_card(nmck=Decimal("500000"))).nmck_in_band is False  # < 2 млн
-    assert compute_factors(_card(nmck=Decimal("200000000"))).nmck_in_band is False  # > 150 млн
-    assert (
-        compute_factors(_card(region_code="77")).region_priority is False
-    )  # Москва — не приоритет
+    assert compute_factors(_card(nmck=Decimal("1800000"))).nmck_in_band is False  # 1.5–2: не в band
+    assert compute_factors(_card(region_code="77")).region_priority is False  # Москва
     assert compute_factors(_card(region_code="66")).region_priority is True  # Свердловская
 
 

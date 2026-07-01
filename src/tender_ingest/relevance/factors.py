@@ -17,8 +17,11 @@ from typing import Protocol
 # 89 ЯНАО, 59 Пермский край, 55 Омская область.
 PRIORITY_REGIONS = frozenset({"45", "66", "72", "74", "86", "89", "59", "55"})
 
-NMCK_MIN = Decimal("2000000")  # 2 млн ₽
-NMCK_MAX = Decimal("150000000")  # 150 млн ₽
+NMCK_MIN = Decimal("2000000")  # 2 млн ₽ — нижняя граница «в диапазоне»
+NMCK_MAX = Decimal("150000000")  # 150 млн ₽ — верхняя граница «в диапазоне»
+# Жёсткие границы: вне — исключаем; в зоне затухания (1.5–2 / 150–180) Claude штрафует.
+NMCK_HARD_MIN = Decimal("1500000")  # 1.5 млн ₽
+NMCK_HARD_MAX = Decimal("180000000")  # 180 млн ₽
 
 _AUCTION = re.compile(r"аукцион", re.IGNORECASE)
 _KONKURS = re.compile(r"конкурс", re.IGNORECASE)
@@ -36,7 +39,6 @@ class Factors:
     region_code: str | None
     region_priority: bool
     customer_excluded: bool
-    is_sng: bool
     stage: str | None
     stage_active: bool  # этап «Подача заявок»
 
@@ -50,7 +52,6 @@ class Factors:
             "region_code": self.region_code,
             "region_priority": self.region_priority,
             "customer_excluded": self.customer_excluded,
-            "is_sng": self.is_sng,
             "stage": self.stage,
             "stage_active": self.stage_active,
         }
@@ -79,7 +80,6 @@ def compute_factors(t: _CardLike) -> Factors:
     else:
         kind = None
 
-    law_l = (t.law or "").lower()
     nmck = t.nmck
     return Factors(
         law=t.law,
@@ -89,21 +89,29 @@ def compute_factors(t: _CardLike) -> Factors:
         nmck_in_band=(nmck is not None and NMCK_MIN <= nmck <= NMCK_MAX),
         region_code=t.region_code,
         region_priority=(t.region_code in PRIORITY_REGIONS),
+        # Стоп-лист по имени — быстрый пре-фильтр; при появлении таблицы известных
+        # ИНН матчить по ИНН как основной признак (см. FIXES/analysis).
         customer_excluded=bool(_EXCLUDED_CUSTOMER.search(t.customer_name or "")),
-        is_sng="снг" in law_l,
         stage=t.stage,
         stage_active=((t.stage or "").strip().lower() == "подача заявок"),
     )
 
 
 def hard_exclusion(f: Factors) -> str | None:
-    """Причина жёсткого исключения (→ noise, без вызова Claude) или None."""
-    if f.method_kind == "аукцион":
-        return "электронный аукцион — не наш формат"
+    """Причина жёсткого исключения (→ noise, без вызова Claude) или None.
+
+    СНГ/зарубеж определяет Claude по промпту (в полях выгрузки надёжного признака нет).
+    Аукцион — не жёсткое исключение, а мягкое (см. is_auction).
+    """
     if f.customer_excluded:
         return "заказчик в стоп-листе (Россети / ЕЭСК)"
-    if f.is_sng:
-        return "закупки СНГ — не рассматриваем"
     if f.stage is not None and not f.stage_active:
         return f"приём заявок неактивен (этап: {f.stage})"
+    if f.nmck is not None and (f.nmck < NMCK_HARD_MIN or f.nmck > NMCK_HARD_MAX):
+        return "НМЦ вне рабочего диапазона (1.5–180 млн ₽)"
     return None
+
+
+def is_auction(f: Factors) -> bool:
+    """Электронный аукцион — мягко откладываем (отдельный список), не хороним в шум."""
+    return f.method_kind == "аукцион"

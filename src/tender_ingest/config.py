@@ -26,7 +26,8 @@ class Settings(BaseSettings):
 
     # LLM-арбитр релевантности (Claude / Anthropic API). Ключ обязателен для скоринга.
     anthropic_api_key: str = ""
-    claude_model: str = "claude-opus-4-8"
+    # Haiku: массовый триаж по структурированным полям + короткое резюме дешевле в разы.
+    claude_model: str = "claude-haiku-4-5"
 
     # Веб-интерфейс (Фаза 2). Общий пароль на бюро + секрет подписи сессии-cookie.
     # В проде ОБЯЗАТЕЛЬНО задать через .env (дефолты — только для локалки).

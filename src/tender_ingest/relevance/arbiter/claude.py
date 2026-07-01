@@ -13,7 +13,12 @@ import json
 import anthropic
 import structlog
 
-from tender_ingest.relevance.arbiter.base import NOT_SCORED, ArbiterVerdict, RelevanceArbiter
+from tender_ingest.relevance.arbiter.base import (
+    NOT_SCORED,
+    NOT_SCORED_SCORE,
+    ArbiterVerdict,
+    RelevanceArbiter,
+)
 from tender_ingest.relevance.arbiter.prompt import BATCH_SCHEMA, SYSTEM_PROMPT, build_batch_message
 
 log = structlog.get_logger()
@@ -64,6 +69,8 @@ class ClaudeArbiter(RelevanceArbiter):
         ) as exc:
             log.warning("claude_batch_failed", size=len(items), error=str(exc))
 
-        # Гарантируем запись для каждой запрошенной карточки (пропуски -> 0).
-        fallback = ArbiterVerdict(score=0, summary=NOT_SCORED, provider=self.provider)
+        # Пропущенные/сбойные -> зона «возможно» (не теряем тендер в шуме).
+        fallback = ArbiterVerdict(
+            score=NOT_SCORED_SCORE, summary=NOT_SCORED, provider=self.provider
+        )
         return {reestr: by_reestr.get(reestr, fallback) for reestr, _ in items}

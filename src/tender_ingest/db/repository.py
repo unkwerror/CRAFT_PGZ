@@ -110,6 +110,11 @@ class RelevanceRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    def requeue_all(self) -> None:
+        """Вернуть все закупки в очередь ('pending') для полной переоценки."""
+        self.session.execute(update(AnalysisQueue).values(status="pending"))
+        self.session.commit()
+
     def pending(self, limit: int | None = None) -> Sequence[Tender]:
         """Полные карточки закупок в очереди со статусом 'pending'."""
         stmt = (

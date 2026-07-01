@@ -8,6 +8,9 @@ from pydantic import BaseModel
 
 # Маркер: карточку модель пропустила (её нет в ответе батча) — повод для ретрая.
 NOT_SCORED = "не оценено моделью"
+# Балл для неоценённых: строго между MAYBE_THRESHOLD(35) и RELEVANT_THRESHOLD(60),
+# чтобы неоценённая карточка попала в «возможно» (на глаза человеку), а не в «шум».
+NOT_SCORED_SCORE = 45
 
 
 class ArbiterVerdict(BaseModel):

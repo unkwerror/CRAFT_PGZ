@@ -2,9 +2,10 @@
   {% set styles = {
     'relevant': 'bg-emerald-100 text-emerald-800',
     'maybe':    'bg-amber-100 text-amber-800',
-    'noise':    'bg-slate-200 text-slate-600'
+    'noise':    'bg-slate-200 text-slate-600',
+    'auction':  'bg-indigo-100 text-indigo-800'
   } %}
-  {% set labels = {'relevant': 'подходит', 'maybe': 'возможно', 'noise': 'не подходит'} %}
+  {% set labels = {'relevant': 'подходит', 'maybe': 'возможно', 'noise': 'не подходит', 'auction': 'аукцион'} %}
   <span class="px-2 py-0.5 rounded text-xs font-medium {{ styles.get(verdict, 'bg-slate-100 text-slate-500') }}">
     {{ labels.get(verdict, 'не оценён') }}
   </span>

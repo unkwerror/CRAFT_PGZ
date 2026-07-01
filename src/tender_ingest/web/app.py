@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
@@ -16,10 +17,14 @@ from tender_ingest.logging import configure_logging
 from tender_ingest.web.routes import auth, documents, score, tenders, upload
 from tender_ingest.web.security import NotAuthenticatedError
 
+log = structlog.get_logger()
+
 
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
+    if settings.web_password == "craft" or settings.session_secret == "dev-insecure-change-me":
+        log.warning("insecure_defaults", detail="смените WEB_PASSWORD и SESSION_SECRET в .env")
 
     app = FastAPI(title="Закупки бюро", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(

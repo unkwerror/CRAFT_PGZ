@@ -64,16 +64,27 @@
     <div class="flex items-center gap-1.5 text-xs">
       <a href="/?verdict=relevant" class="px-2 py-1 rounded bg-emerald-100 text-emerald-800 hover:bg-emerald-200">подходят {{ facets.verdict_counts.get('relevant', 0) }}</a>
       <a href="/?verdict=maybe" class="px-2 py-1 rounded bg-amber-100 text-amber-800 hover:bg-amber-200">возможно {{ facets.verdict_counts.get('maybe', 0) }}</a>
+      <a href="/?verdict=auction" class="px-2 py-1 rounded bg-indigo-100 text-indigo-800 hover:bg-indigo-200">аукцион {{ facets.verdict_counts.get('auction', 0) }}</a>
       <a href="/?verdict=noise" class="px-2 py-1 rounded bg-slate-200 text-slate-600 hover:bg-slate-300">не подходят {{ facets.verdict_counts.get('noise', 0) }}</a>
     </div>
   </div>
-  {% if pending and pending > 0 %}
-  <form action="/score" method="post" onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Оцениваю… (до минуты)';">
-    <button class="bg-emerald-600 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-emerald-700 disabled:opacity-60">
-      Оценить ИИ · {{ pending }}
-    </button>
-  </form>
-  {% endif %}
+  <div class="flex items-center gap-2">
+    {% if pending and pending > 0 %}
+    <form action="/score" method="post"
+          onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Оцениваю…';">
+      <button class="bg-emerald-600 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-emerald-700 disabled:opacity-60">
+        Оценить новые · {{ pending }}
+      </button>
+    </form>
+    {% endif %}
+    <form action="/score" method="post"
+          onsubmit="if(!confirm('Переоценить ВСЕ закупки заново через ИИ? Это займёт до минуты.'))return false; this.querySelector('button').disabled=true; this.querySelector('button').textContent='Оцениваю…';">
+      <input type="hidden" name="all" value="1">
+      <button class="border border-slate-300 bg-white text-slate-700 rounded-md px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-60">
+        {{ 'Оценить ИИ' if not pending or pending == 0 else 'Переоценить всё' }}
+      </button>
+    </form>
+  </div>
 </div>
 
 <form method="get" class="bg-white rounded-lg p-4 mb-4 shadow-sm border border-slate-200">
@@ -112,7 +123,7 @@
         <label class="block text-xs text-slate-500 mb-1">Вердикт</label>
         <select name="verdict" class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
           <option value="">все</option>
-          {% for v, label in [('relevant','подходит'),('maybe','возможно'),('noise','не подходит')] %}
+          {% for v, label in [('relevant','подходит'),('maybe','возможно'),('auction','аукцион'),('noise','не подходит')] %}
           <option value="{{ v }}" {{ 'selected' if f.verdict == v }}>{{ label }}</option>
           {% endfor %}
         </select>

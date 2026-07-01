@@ -23,7 +23,7 @@ from sqlalchemy.orm import InstrumentedAttribute, Session
 from tender_ingest.db.models import AnalysisQueue, Tender, TenderDocument, TenderRelevance
 
 _SORTS = {"score", "nmck", "deadline", "publish"}
-_VERDICTS = {"relevant", "maybe", "noise"}
+_VERDICTS = {"relevant", "maybe", "noise", "auction"}
 _ADVANCE = {"with", "without"}
 PAGE_SIZE = 50
 

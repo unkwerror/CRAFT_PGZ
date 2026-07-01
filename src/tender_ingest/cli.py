@@ -45,7 +45,8 @@ def score_cmd(limit: int | None) -> None:
     summary = score_pending(limit=limit)
     click.echo(
         f"total={summary.total} relevant={summary.relevant} maybe={summary.maybe} "
-        f"noise={summary.noise} claude_calls={summary.sent_to_llm}"
+        f"auction={summary.auction} noise={summary.noise} "
+        f"claude={summary.sent_to_llm} skipped={summary.skipped}"
     )
 
 

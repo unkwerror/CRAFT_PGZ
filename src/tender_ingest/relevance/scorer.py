@@ -21,7 +21,7 @@ from tender_ingest.db.session import get_session_factory
 from tender_ingest.relevance.arbiter import RelevanceArbiter, create_arbiter
 from tender_ingest.relevance.arbiter.base import NOT_SCORED
 from tender_ingest.relevance.arbiter.prompt import build_card_block
-from tender_ingest.relevance.factors import Factors, compute_factors, hard_exclusion
+from tender_ingest.relevance.factors import Factors, compute_factors, hard_exclusion, is_auction
 
 log = structlog.get_logger()
 
@@ -45,7 +45,9 @@ class ScoreSummary:
     relevant: int
     maybe: int
     noise: int
+    auction: int
     sent_to_llm: int
+    skipped: int  # LLM-часть пропущена (нет ключа) — остались в очереди
 
 
 @dataclass
@@ -61,15 +63,19 @@ class _Result:
 def score_pending(
     arbiter: RelevanceArbiter | None = None, limit: int | None = None
 ) -> ScoreSummary:
-    """Оценить все закупки в очереди. Возвращает сводку по вердиктам."""
-    arb = arbiter or create_arbiter()
+    """Оценить все закупки в очереди. Возвращает сводку по вердиктам.
+
+    Жёсткие исключения и аукционы решаются без LLM (даже без ключа). LLM-часть —
+    best-effort: если арбитр недоступен, эти закупки остаются в очереди (pending).
+    """
     factory = get_session_factory()
+    skipped = 0
 
     with factory() as session:
         repo = RelevanceRepository(session)
         tenders = repo.pending(limit=limit)
 
-        # Фаза 1 (главный поток): факторы, жёсткие исключения, тексты карточек.
+        # Фаза 1 (главный поток, без LLM): факторы, жёсткие исключения, аукционы.
         results: dict[str, _Result] = {}
         llm_jobs: list[tuple[str, str, Factors]] = []  # (reestr, card_text, factors)
         for t in tenders:
@@ -77,28 +83,39 @@ def score_pending(
             hard = hard_exclusion(f)
             if hard is not None:
                 results[t.reestr_number] = _Result(t.reestr_number, 0, "noise", hard, "rules", f)
+            elif is_auction(f):
+                results[t.reestr_number] = _Result(
+                    t.reestr_number, 0, "auction", "электронный аукцион — отложено", "rules", f
+                )
             else:
                 llm_jobs.append((t.reestr_number, build_card_block(t), f))
 
-        # Фаза 2 (пул потоков): Claude оценивает карточки пачками, батчи — параллельно.
-        def _score_chunk(chunk: list[tuple[str, str, Factors]]) -> list[_Result]:
-            verdicts = arb.decide_batch([(reestr, card) for reestr, card, _ in chunk])
-            out = []
-            for reestr, _, factors in chunk:
-                v = verdicts[reestr]
-                out.append(
+        # Фаза 2: арбитр создаётся лениво и только если есть что оценивать LLM.
+        arb = arbiter
+        if llm_jobs and arb is None:
+            try:
+                arb = create_arbiter()
+            except ValueError as exc:
+                log.warning("arbiter_unavailable", pending=len(llm_jobs), error=str(exc))
+                arb = None
+
+        if llm_jobs and arb is not None:
+            scorer = arb  # для замыкания (mypy: не None)
+
+            def _score_chunk(chunk: list[tuple[str, str, Factors]]) -> list[_Result]:
+                verdicts = scorer.decide_batch([(reestr, card) for reestr, card, _ in chunk])
+                return [
                     _Result(
                         reestr,
-                        v.score,
-                        verdict_from_score(v.score),
-                        v.summary,
-                        arb.provider,
+                        verdicts[reestr].score,
+                        verdict_from_score(verdicts[reestr].score),
+                        verdicts[reestr].summary,
+                        scorer.provider,
                         factors,
                     )
-                )
-            return out
+                    for reestr, _, factors in chunk
+                ]
 
-        if llm_jobs:
             chunks = [llm_jobs[i : i + CHUNK_SIZE] for i in range(0, len(llm_jobs), CHUNK_SIZE)]
             workers = min(CHUNK_CONCURRENCY, len(chunks))
             with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -113,11 +130,12 @@ def score_pending(
                 for r in _score_chunk(missed):
                     if r.summary != NOT_SCORED:
                         results[r.reestr_number] = r
+        elif llm_jobs:
+            skipped = len(llm_jobs)  # арбитр недоступен — оставляем в очереди
 
-        # Фаза 3 (главный поток): запись.
-        counts = {"relevant": 0, "maybe": 0, "noise": 0}
-        for t in tenders:
-            r = results[t.reestr_number]
+        # Фаза 3 (главный поток): пишем только обработанные (пропущенные -> pending).
+        counts = {"relevant": 0, "maybe": 0, "noise": 0, "auction": 0}
+        for r in results.values():
             counts[r.verdict] += 1
             repo.upsert(
                 r.reestr_number,
@@ -128,7 +146,7 @@ def score_pending(
                 factors=r.factors.as_dict(),
             )
         session.commit()
-        total = len(tenders)
+        total = len(results)
 
     log.info(
         "score_done",
@@ -136,13 +154,16 @@ def score_pending(
         relevant=counts["relevant"],
         maybe=counts["maybe"],
         noise=counts["noise"],
-        sent_to_llm=len(llm_jobs),
-        arbiter=arb.provider,
+        auction=counts["auction"],
+        sent_to_llm=len(llm_jobs) - skipped,
+        skipped=skipped,
     )
     return ScoreSummary(
         total=total,
         relevant=counts["relevant"],
         maybe=counts["maybe"],
         noise=counts["noise"],
-        sent_to_llm=len(llm_jobs),
+        auction=counts["auction"],
+        sent_to_llm=len(llm_jobs) - skipped,
+        skipped=skipped,
     )
