@@ -20,7 +20,7 @@ from typing import Any
 from sqlalchemy import Numeric, Select, func, or_, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
-from tender_ingest.db.models import Tender, TenderRelevance
+from tender_ingest.db.models import AnalysisQueue, Tender, TenderDocument, TenderRelevance
 
 _SORTS = {"score", "nmck", "deadline", "publish"}
 _VERDICTS = {"relevant", "maybe", "noise"}
@@ -460,3 +460,65 @@ class WebRepository:
             verdict_counts=verdict_counts,
             total=total,
         )
+
+    def pending_count(self) -> int:
+        """Сколько закупок ещё не оценено ИИ (в очереди со статусом 'pending')."""
+        return self.session.execute(
+            select(func.count()).select_from(AnalysisQueue).where(AnalysisQueue.status == "pending")
+        ).scalar_one()
+
+
+@dataclass
+class DocMeta:
+    id: int
+    filename: str
+    content_type: str | None
+    size_bytes: int
+    uploaded_at: dt.datetime
+
+
+class DocumentRepository:
+    """CRUD документов по тендеру (ТЗ, документация). Байты храним в БД (bytea)."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def list_for(self, reestr_number: str) -> list[DocMeta]:
+        rows = self.session.execute(
+            select(
+                TenderDocument.id,
+                TenderDocument.filename,
+                TenderDocument.content_type,
+                TenderDocument.size_bytes,
+                TenderDocument.uploaded_at,
+            )
+            .where(TenderDocument.reestr_number == reestr_number)
+            .order_by(TenderDocument.uploaded_at.desc())
+        ).all()
+        return [DocMeta(r[0], r[1], r[2], r[3], r[4]) for r in rows]
+
+    def add(self, reestr_number: str, filename: str, content_type: str | None, data: bytes) -> None:
+        self.session.add(
+            TenderDocument(
+                reestr_number=reestr_number,
+                filename=filename,
+                content_type=content_type,
+                size_bytes=len(data),
+                data=data,
+            )
+        )
+        self.session.commit()
+
+    def get(self, reestr_number: str, doc_id: int) -> TenderDocument | None:
+        """Документ с байтами; сверяем принадлежность тендеру (защита от IDOR)."""
+        return self.session.execute(
+            select(TenderDocument).where(
+                TenderDocument.id == doc_id, TenderDocument.reestr_number == reestr_number
+            )
+        ).scalar_one_or_none()
+
+    def delete(self, reestr_number: str, doc_id: int) -> None:
+        doc = self.get(reestr_number, doc_id)
+        if doc is not None:
+            self.session.delete(doc)
+            self.session.commit()

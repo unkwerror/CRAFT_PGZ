@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
 
 from tender_ingest.db.session import get_session_factory
-from tender_ingest.web.repository import PAGE_SIZE, Filters, WebRepository
+from tender_ingest.web.repository import PAGE_SIZE, DocumentRepository, Filters, WebRepository
 from tender_ingest.web.security import require_auth
 from tender_ingest.web.templating import templates
 
@@ -51,6 +51,7 @@ def index(  # noqa: PLR0913 — плоский разбор query-парамет
     deadline_to: str | None = None,
     sort: str | None = None,
     page: str | None = None,
+    msg: str | None = None,
 ) -> HTMLResponse:
     f = Filters.from_query(
         search=search,
@@ -91,6 +92,7 @@ def index(  # noqa: PLR0913 — плоский разбор query-парамет
         repo = WebRepository(session)
         rows, total = repo.list_tenders(f)
         facets = repo.facets()
+        pending = repo.pending_count()
     total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
     return templates.TemplateResponse(
         request,
@@ -102,6 +104,8 @@ def index(  # noqa: PLR0913 — плоский разбор query-парамет
             "f": f,
             "page": f.page,
             "total_pages": total_pages,
+            "pending": pending,
+            "msg": msg,
         },
     )
 
@@ -115,4 +119,7 @@ def detail(request: Request, reestr_number: str) -> HTMLResponse:
                 request, "not_found.html", {"reestr_number": reestr_number}, status_code=404
             )
         tender, rel = found
-        return templates.TemplateResponse(request, "tenders/detail.html", {"t": tender, "rel": rel})
+        documents = DocumentRepository(session).list_for(reestr_number)
+        return templates.TemplateResponse(
+            request, "tenders/detail.html", {"t": tender, "rel": rel, "documents": documents}
+        )

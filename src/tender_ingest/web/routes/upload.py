@@ -1,4 +1,4 @@
-"""Загрузка Excel-выгрузки через веб: сохранить -> ingest -> score -> показать итог."""
+"""Загрузка Excel-выгрузки через веб: сохранить -> ingest. Оценка — отдельной кнопкой."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from fastapi.responses import HTMLResponse
 
 from tender_ingest.config import get_settings
 from tender_ingest.pipeline import ingest_excel
-from tender_ingest.relevance.scorer import score_pending
 from tender_ingest.web.security import require_auth
 from tender_ingest.web.templating import templates
 
@@ -44,16 +43,15 @@ def upload(request: Request, file: Annotated[UploadFile, File()]) -> HTMLRespons
         tmp.flush()
         try:
             ingest = ingest_excel(Path(tmp.name))
-            scored = score_pending()
         except Exception as exc:  # noqa: BLE001 — показываем пользователю любую ошибку парсинга
             log.warning("web_upload_failed", filename=name, error=str(exc))
             return _error(request, f"Не удалось разобрать файл: {exc}")
 
-    log.info("web_upload_done", filename=name, rows=ingest.rows_total, scored=scored.total)
+    log.info("web_upload_done", filename=name, rows=ingest.rows_total)
     return templates.TemplateResponse(
         request,
         "upload.html",
-        {"result": {"filename": name, "ingest": ingest, "scored": scored}, "error": None},
+        {"result": {"filename": name, "ingest": ingest}, "error": None},
     )
 
 

@@ -13,7 +13,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from tender_ingest.config import get_settings
 from tender_ingest.logging import configure_logging
-from tender_ingest.web.routes import auth, tenders, upload
+from tender_ingest.web.routes import auth, documents, score, tenders, upload
 from tender_ingest.web.security import NotAuthenticatedError
 
 
@@ -41,6 +41,8 @@ def create_app() -> FastAPI:
 
     app.include_router(auth.router)
     app.include_router(upload.router)
+    app.include_router(score.router)
+    app.include_router(documents.router)
     app.include_router(tenders.router)
     return app
 

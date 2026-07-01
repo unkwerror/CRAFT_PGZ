@@ -1,23 +1,21 @@
 {% extends "base.html" %}
 {% from "_macros.html" import verdict_badge, score_pill %}
-{% block title %}Закупки — {{ total }}{% endblock %}
+{% block title %}Закупки{% endblock %}
 
 {% macro inp(name, label, value, type='text', ph='') %}
 <div>
   <label class="block text-xs text-slate-500 mb-1">{{ label }}</label>
   <input name="{{ name }}" value="{{ value if value is not none else '' }}" type="{{ type }}" placeholder="{{ ph }}"
-         class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">
+         class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
 </div>
 {% endmacro %}
 
 {% macro sel(name, label, current, options) %}
 <div>
   <label class="block text-xs text-slate-500 mb-1">{{ label }}</label>
-  <select name="{{ name }}" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">
+  <select name="{{ name }}" class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
     <option value="">все</option>
-    {% for o in options %}
-    <option value="{{ o }}" {{ 'selected' if current == o }}>{{ o }}</option>
-    {% endfor %}
+    {% for o in options %}<option value="{{ o }}" {{ 'selected' if current == o }}>{{ o }}</option>{% endfor %}
   </select>
 </div>
 {% endmacro %}
@@ -27,10 +25,10 @@
   <label class="block text-xs text-slate-500 mb-1">{{ label }}</label>
   <div class="flex items-center gap-1">
     <input name="{{ nmin }}" value="{{ vmin if vmin is not none else '' }}" type="{{ type }}" placeholder="от"
-           class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">
+           class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
     <span class="text-slate-400">–</span>
     <input name="{{ nmax }}" value="{{ vmax if vmax is not none else '' }}" type="{{ type }}" placeholder="до"
-           class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">
+           class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
   </div>
 </div>
 {% endmacro %}
@@ -56,69 +54,74 @@
 
 {% block content %}
 
-<div class="flex items-baseline justify-between mb-4">
-  <h1 class="text-xl font-semibold">Закупки</h1>
-  <div class="text-sm text-slate-500">
-    Найдено: {{ total }} из {{ facets.total }} ·
-    <span class="text-emerald-700">релевантных {{ facets.verdict_counts.get('relevant', 0) }}</span> ·
-    спорных {{ facets.verdict_counts.get('maybe', 0) }} ·
-    шум {{ facets.verdict_counts.get('noise', 0) }}
+{% if msg %}
+<div class="mb-4 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5">{{ msg }}</div>
+{% endif %}
+
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div class="flex items-center gap-3">
+    <h1 class="text-xl font-semibold">Закупки</h1>
+    <div class="flex items-center gap-1.5 text-xs">
+      <a href="/?verdict=relevant" class="px-2 py-1 rounded bg-emerald-100 text-emerald-800 hover:bg-emerald-200">подходят {{ facets.verdict_counts.get('relevant', 0) }}</a>
+      <a href="/?verdict=maybe" class="px-2 py-1 rounded bg-amber-100 text-amber-800 hover:bg-amber-200">возможно {{ facets.verdict_counts.get('maybe', 0) }}</a>
+      <a href="/?verdict=noise" class="px-2 py-1 rounded bg-slate-200 text-slate-600 hover:bg-slate-300">не подходят {{ facets.verdict_counts.get('noise', 0) }}</a>
+    </div>
   </div>
+  {% if pending and pending > 0 %}
+  <form action="/score" method="post" onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Оцениваю… (до минуты)';">
+    <button class="bg-emerald-600 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-emerald-700 disabled:opacity-60">
+      Оценить ИИ · {{ pending }}
+    </button>
+  </form>
+  {% endif %}
 </div>
 
-<form method="get" class="bg-white rounded-lg p-4 mb-4 shadow-sm">
-  <!-- Ключевые слова -->
+<form method="get" class="bg-white rounded-lg p-4 mb-4 shadow-sm border border-slate-200">
   <div class="flex flex-wrap gap-3 items-end">
     <div class="grow min-w-[240px]">
       <label class="block text-xs text-slate-500 mb-1">Ключевые слова</label>
       <input name="search" value="{{ f.search or '' }}" placeholder="проектная документация реставрация…"
-             class="w-full border border-slate-300 rounded px-3 py-1.5 text-sm">
+             class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm">
     </div>
     <div class="grow min-w-[200px]">
       <label class="block text-xs text-slate-500 mb-1">Исключать слова</label>
-      <input name="exclude" value="{{ f.exclude or '' }}" placeholder="поставка аренда охрана…"
-             class="w-full border border-slate-300 rounded px-3 py-1.5 text-sm">
+      <input name="exclude" value="{{ f.exclude or '' }}" placeholder="поставка аренда…"
+             class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm">
     </div>
     <div>
       <label class="block text-xs text-slate-500 mb-1">Сортировка</label>
-      <select name="sort" class="border border-slate-300 rounded px-2 py-1.5 text-sm">
-        {% for s, label in [('score','по релевантности'),('nmck','по НМЦ'),('deadline','по дедлайну'),('publish','по дате публикации')] %}
+      <select name="sort" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm">
+        {% for s, label in [('score','по оценке'),('nmck','по НМЦ'),('deadline','по дедлайну'),('publish','по дате публикации')] %}
         <option value="{{ s }}" {{ 'selected' if f.sort == s }}>{{ label }}</option>
         {% endfor %}
       </select>
     </div>
-    <button class="bg-slate-900 text-white rounded px-4 py-1.5 text-sm hover:bg-slate-700">Применить</button>
+    <button class="bg-slate-900 text-white rounded-md px-4 py-1.5 text-sm hover:bg-slate-700">Применить</button>
     <a href="/" class="text-sm text-slate-500 hover:text-slate-800 py-1.5">сбросить</a>
   </div>
-  <div class="mt-2">
-    {{ chk('exact', 'Точное соответствие (фраза целиком)', f.exact) }}
-  </div>
+  <div class="mt-2">{{ chk('exact', 'Точное соответствие (фраза целиком)', f.exact) }}</div>
 
   <details class="mt-3" {{ 'open' if f.any_advanced() }}>
     <summary class="text-sm text-slate-600 cursor-pointer select-none">Все фильтры</summary>
-
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
       {{ chkgroup('laws', 'Тип торгов', facets.laws, f.laws) }}
       {{ chkgroup('stages', 'Этап', facets.stages, f.stages) }}
     </div>
-
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
       <div>
         <label class="block text-xs text-slate-500 mb-1">Вердикт</label>
-        <select name="verdict" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">
+        <select name="verdict" class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
           <option value="">все</option>
-          {% for v, label in [('relevant','релевантно'),('maybe','спорно'),('noise','шум')] %}
+          {% for v, label in [('relevant','подходит'),('maybe','возможно'),('noise','не подходит')] %}
           <option value="{{ v }}" {{ 'selected' if f.verdict == v }}>{{ label }}</option>
           {% endfor %}
         </select>
       </div>
       <div>
         <label class="block text-xs text-slate-500 mb-1">Регион</label>
-        <select name="region_code" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">
+        <select name="region_code" class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
           <option value="">все</option>
-          {% for code, name in facets.regions %}
-          <option value="{{ code }}" {{ 'selected' if f.region_code == code }}>{{ code }} {{ name }}</option>
-          {% endfor %}
+          {% for code, name in facets.regions %}<option value="{{ code }}" {{ 'selected' if f.region_code == code }}>{{ code }} {{ name }}</option>{% endfor %}
         </select>
       </div>
       {{ sel('purchase_method', 'Способ отбора', f.purchase_method, facets.purchase_methods) }}
@@ -128,21 +131,20 @@
       {{ sel('smp_sono', 'Преимущества (СМП/СОНО)', f.smp_sono, facets.smp_sono) }}
       <div>
         <label class="block text-xs text-slate-500 mb-1">Авансирование</label>
-        <select name="advance" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">
+        <select name="advance" class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
           <option value="">любое</option>
           <option value="with" {{ 'selected' if f.advance == 'with' }}>с авансом</option>
           <option value="without" {{ 'selected' if f.advance == 'without' }}>без аванса</option>
         </select>
       </div>
-      {{ sel('decided_by', 'Кто решил', f.decided_by, facets.decided_by) }}
+      {{ sel('decided_by', 'Кто оценил', f.decided_by, facets.decided_by) }}
       {{ sel('currency', 'Валюта', f.currency, facets.currencies) }}
       {{ sel('source', 'Источник', f.source, facets.sources) }}
     </div>
-
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 items-start">
       {{ rng('nmck_min', 'nmck_max', 'Начальная цена, ₽', f.nmck_min, f.nmck_max) }}
       {{ chk('nmck_none', 'Включать без НМЦ', f.nmck_none) }}
-      {{ rng('score_min', 'score_max', 'Score (релевантность)', f.score_min, f.score_max) }}
+      {{ rng('score_min', 'score_max', 'Оценка ИИ', f.score_min, f.score_max) }}
       <div></div>
       {{ rng('bid_min', 'bid_max', 'Обеспечение заявки, ₽', f.bid_min, f.bid_max) }}
       {{ chk('bid_none', 'Без обеспечения заявки', f.bid_none) }}
@@ -156,51 +158,43 @@
   </details>
 </form>
 
-<div class="bg-white rounded-lg shadow-sm overflow-hidden">
-  <table class="w-full text-sm">
-    <thead class="bg-slate-50 text-slate-500 text-left">
-      <tr>
-        <th class="px-3 py-2 w-14">Score</th>
-        <th class="px-3 py-2">Предмет</th>
-        <th class="px-3 py-2 w-32 text-right">НМЦ</th>
-        <th class="px-3 py-2 w-20">Закон</th>
-        <th class="px-3 py-2 w-40">Регион</th>
-        <th class="px-3 py-2 w-28">Дедлайн</th>
-      </tr>
-    </thead>
-    <tbody class="divide-y divide-slate-100">
-      {% for r in rows %}
-      <tr class="hover:bg-slate-50">
-        <td class="px-3 py-2">{{ score_pill(r.score) }}</td>
-        <td class="px-3 py-2">
-          <a href="/tender/{{ r.reestr_number }}" class="text-slate-900 hover:underline line-clamp-2">
-            {{ r.subject or '(без названия)' }}
-          </a>
-          {% if r.summary %}
-          <div class="text-xs text-slate-500 mt-1 line-clamp-2">{{ r.summary }}</div>
-          {% endif %}
-          <div class="text-xs text-slate-400 mt-0.5">
-            {{ r.reestr_number }} · {{ r.etp or '—' }} · {{ verdict_badge(r.verdict) }}
-          </div>
-        </td>
-        <td class="px-3 py-2 text-right whitespace-nowrap">{{ r.nmck | money(r.currency) }}</td>
-        <td class="px-3 py-2">{{ r.law or '—' }}</td>
-        <td class="px-3 py-2 text-slate-600">{{ r.region_code or '' }} {{ r.region_name or '' }}</td>
-        <td class="px-3 py-2 whitespace-nowrap">{{ r.submission_deadline | date_ru }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="6" class="px-3 py-8 text-center text-slate-400">Ничего не найдено</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<div class="text-sm text-slate-500 mb-2">Найдено: {{ total }} из {{ facets.total }}</div>
+
+<div class="space-y-2">
+  {% for r in rows %}
+  <a href="/tender/{{ r.reestr_number }}"
+     class="block bg-white rounded-lg border border-slate-200 hover:border-slate-300 hover:shadow-sm transition p-4">
+    <div class="flex gap-4">
+      <div class="shrink-0 pt-0.5">{{ score_pill(r.score) }}</div>
+      <div class="min-w-0 grow">
+        <div class="flex items-start justify-between gap-3">
+          <div class="font-medium text-slate-900 leading-snug">{{ r.subject or '(без названия)' }}</div>
+          <div class="shrink-0">{{ verdict_badge(r.verdict) }}</div>
+        </div>
+        {% if r.summary %}
+        <p class="text-[13px] leading-6 text-slate-600 mt-1.5 line-clamp-2">{{ r.summary }}</p>
+        {% endif %}
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400 mt-2">
+          <span class="text-slate-600 font-medium">{{ r.nmck | money(r.currency) }}</span>
+          <span>{{ r.law or '—' }}</span>
+          <span>{{ r.region_code or '' }} {{ r.region_name or '' }}</span>
+          <span>дедлайн {{ r.submission_deadline | date_ru }}</span>
+          <span>{{ r.etp or '' }}</span>
+        </div>
+      </div>
+    </div>
+  </a>
+  {% else %}
+  <div class="bg-white rounded-lg border border-slate-200 p-8 text-center text-slate-400">Ничего не найдено</div>
+  {% endfor %}
 </div>
 
 {% if total_pages > 1 %}
 <div class="flex items-center justify-between mt-4 text-sm">
   <div class="text-slate-500">Страница {{ page }} из {{ total_pages }}</div>
   <div class="flex gap-2">
-    {% if page > 1 %}<a href="/?{{ qs(f, page=page-1) }}" class="px-3 py-1 bg-white border border-slate-300 rounded hover:bg-slate-50">← Назад</a>{% endif %}
-    {% if page < total_pages %}<a href="/?{{ qs(f, page=page+1) }}" class="px-3 py-1 bg-white border border-slate-300 rounded hover:bg-slate-50">Вперёд →</a>{% endif %}
+    {% if page > 1 %}<a href="/?{{ qs(f, page=page-1) }}" class="px-3 py-1 bg-white border border-slate-300 rounded-md hover:bg-slate-50">← Назад</a>{% endif %}
+    {% if page < total_pages %}<a href="/?{{ qs(f, page=page+1) }}" class="px-3 py-1 bg-white border border-slate-300 rounded-md hover:bg-slate-50">Вперёд →</a>{% endif %}
   </div>
 </div>
 {% endif %}

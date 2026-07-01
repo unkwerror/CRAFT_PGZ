@@ -5,8 +5,8 @@
 
 <a href="javascript:history.back()" class="text-sm text-slate-500 hover:text-slate-800">← к списку</a>
 
-<div class="bg-white rounded-lg shadow-sm p-6 mt-3">
-  <h1 class="text-lg font-semibold leading-snug">{{ t.subject or '(без названия)' }}</h1>
+<div class="bg-white rounded-lg border border-slate-200 p-6 mt-3">
+  <h1 class="text-lg font-semibold leading-snug text-slate-900">{{ t.subject or '(без названия)' }}</h1>
   <div class="text-sm text-slate-400 mt-1">
     № {{ t.reestr_number }} · {{ t.law or '—' }} ·
     <a href="https://zakupki.gov.ru/epz/order/extendedsearch/results.html?searchString={{ t.reestr_number }}"
@@ -15,31 +15,36 @@
 </div>
 
 {% if rel %}
-<div class="bg-white rounded-lg shadow-sm p-6 mt-4">
-  <div class="flex items-center gap-3 mb-3">
+<div class="bg-white rounded-lg border border-slate-200 p-6 mt-4">
+  <div class="flex items-center gap-3 mb-4">
     {{ score_pill(rel.score) }}
     {{ verdict_badge(rel.verdict) }}
-    <span class="text-xs text-slate-400">оценка: {{ rel.decided_by }}</span>
+    <span class="text-sm font-medium text-slate-700">Анализ ИИ</span>
+    <span class="text-xs text-slate-400 ml-auto">оценка: {{ rel.decided_by }}</span>
   </div>
   {% if rel.summary %}
-  <p class="text-sm text-slate-700 leading-relaxed">{{ rel.summary }}</p>
+  <p class="text-[15px] leading-7 text-slate-700">{{ rel.summary }}</p>
   {% endif %}
   {% set fx = rel.factors or {} %}
   {% if fx %}
-  <div class="flex flex-wrap gap-1.5 mt-3">
-    {% macro chip(ok, text) %}<span class="px-2 py-0.5 rounded text-xs border {{ 'bg-emerald-50 text-emerald-700 border-emerald-200' if ok else 'bg-slate-50 text-slate-500 border-slate-200' }}">{{ text }}</span>{% endmacro %}
+  <div class="flex flex-wrap gap-1.5 mt-4">
+    {% macro chip(ok, text) %}<span class="px-2.5 py-1 rounded-md text-xs border {{ 'bg-emerald-50 text-emerald-700 border-emerald-200' if ok else 'bg-slate-50 text-slate-500 border-slate-200' }}">{{ text }}</span>{% endmacro %}
     {{ chip(fx.law == '44-ФЗ', 'закон: ' ~ (fx.law or '—')) }}
     {{ chip(fx.method_kind == 'конкурс', 'способ: ' ~ (fx.method_kind or '—')) }}
     {{ chip(fx.has_advance, 'аванс: ' ~ ('есть' if fx.has_advance else 'нет')) }}
-    {{ chip(fx.nmck_in_band, 'НМЦ в диапазоне 2–150 млн' if fx.nmck_in_band else 'НМЦ вне диапазона') }}
+    {{ chip(fx.nmck_in_band, 'НМЦ 2–150 млн' if fx.nmck_in_band else 'НМЦ вне диапазона') }}
     {{ chip(fx.region_priority, 'регион: ' ~ ('приоритетный' if fx.region_priority else 'иной')) }}
   </div>
   {% endif %}
 </div>
+{% else %}
+<div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mt-4 text-sm text-amber-800">
+  Закупка ещё не оценена ИИ. Нажмите «Оценить ИИ» на <a href="/" class="underline">списке</a>.
+</div>
 {% endif %}
 
 <div class="grid md:grid-cols-2 gap-4 mt-4">
-  <div class="bg-white rounded-lg shadow-sm p-6">
+  <div class="bg-white rounded-lg border border-slate-200 p-6">
     <h2 class="text-sm font-semibold text-slate-500 mb-3">Закупка</h2>
     <dl class="text-sm space-y-1.5">
       {% macro row(k, v) %}<div class="flex justify-between gap-4"><dt class="text-slate-500">{{ k }}</dt><dd class="text-right">{{ v }}</dd></div>{% endmacro %}
@@ -53,7 +58,7 @@
       {{ row('Дедлайн заявок', t.submission_deadline | date_ru(true)) }}
     </dl>
   </div>
-  <div class="bg-white rounded-lg shadow-sm p-6">
+  <div class="bg-white rounded-lg border border-slate-200 p-6">
     <h2 class="text-sm font-semibold text-slate-500 mb-3">Заказчик</h2>
     <dl class="text-sm space-y-1.5">
       {{ row('Название', t.customer_name or '—') }}
@@ -65,27 +70,38 @@
   </div>
 </div>
 
-{% set sec_labels = {'bid':'Обеспечение заявки','contract':'Обеспечение контракта','supply':'Обеспечение поставки','maintenance':'Обеспечение обслуживания','warranty':'Гарантийные обязательства'} %}
-{% set has_sec = t.securities and t.securities.values() | selectattr('raw') | list %}
-{% if has_sec %}
-<div class="bg-white rounded-lg shadow-sm p-6 mt-4">
-  <h2 class="text-sm font-semibold text-slate-500 mb-3">Обеспечения</h2>
-  <table class="w-full text-sm">
-    <tbody class="divide-y divide-slate-100">
-      {% for key, label in sec_labels.items() %}
-      {% set s = t.securities.get(key) %}
-      {% if s and s.raw %}
-      <tr>
-        <td class="py-1.5 text-slate-500">{{ label }}</td>
-        <td class="py-1.5 text-right">
-          {% if s.amount_rub %}{{ s.amount_rub | money('RUB') }}{% elif s.percent %}{{ s.percent }} %{% else %}{{ s.raw }}{% endif %}
-        </td>
-      </tr>
-      {% endif %}
-      {% endfor %}
-    </tbody>
-  </table>
+<!-- Документы по тендеру (ТЗ, документация) -->
+<div class="bg-white rounded-lg border border-slate-200 p-6 mt-4">
+  <h2 class="text-sm font-semibold text-slate-500 mb-3">Документы по тендеру</h2>
+  {% if documents %}
+  <div class="divide-y divide-slate-100 mb-4">
+    {% for d in documents %}
+    <div class="flex items-center justify-between py-2 text-sm">
+      <a href="/tender/{{ t.reestr_number }}/documents/{{ d.id }}" class="text-slate-800 hover:underline truncate mr-3">
+        📄 {{ d.filename }}
+      </a>
+      <div class="flex items-center gap-3 shrink-0 text-xs text-slate-400">
+        <span>{% if d.size_bytes < 1048576 %}{{ (d.size_bytes / 1024) | round | int }} КБ{% else %}{{ (d.size_bytes / 1048576) | round(1) }} МБ{% endif %}</span>
+        <span>{{ d.uploaded_at | date_ru }}</span>
+        <form action="/tender/{{ t.reestr_number }}/documents/{{ d.id }}/delete" method="post"
+              onsubmit="return confirm('Удалить {{ d.filename }}?')">
+          <button class="text-slate-400 hover:text-red-600">удалить</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="text-sm text-slate-400 mb-4">Пока нет файлов. Загрузите ТЗ, проектную документацию и всё, что относится к тендеру.</p>
+  {% endif %}
+
+  <form action="/tender/{{ t.reestr_number }}/documents" method="post" enctype="multipart/form-data"
+        class="flex flex-wrap items-center gap-3">
+    <input type="file" name="file" required
+           class="text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-slate-900 file:text-white hover:file:bg-slate-700">
+    <button class="bg-slate-100 border border-slate-300 rounded-md px-3 py-1.5 text-sm hover:bg-slate-200">Загрузить файл</button>
+    <span class="text-xs text-slate-400">до 50 МБ; PDF, DOC, XLS, ZIP и др.</span>
+  </form>
 </div>
-{% endif %}
 
 {% endblock %}

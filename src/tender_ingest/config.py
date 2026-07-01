@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     session_secret: str = "dev-insecure-change-me"
     session_https_only: bool = False  # в проде за HTTPS -> true (cookie только по TLS)
     max_upload_mb: int = 20  # лимит размера загружаемого .xlsx
+    doc_max_mb: int = 50  # лимит размера документа по тендеру (ТЗ, PDF и пр.)
 
 
 @lru_cache

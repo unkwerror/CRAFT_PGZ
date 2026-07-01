@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -120,5 +121,23 @@ class TenderRelevance(Base):
     summary: Mapped[str | None] = mapped_column(Text)  # резюме под тендер
     factors: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)  # объективные факторы
     scored_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class TenderDocument(Base):
+    """Файл по тендеру (ТЗ, документация и пр.) для детального анализа. Байты — в БД."""
+
+    __tablename__ = "tender_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    reestr_number: Mapped[str] = mapped_column(
+        Text, ForeignKey("tenders.reestr_number", ondelete="CASCADE"), index=True, nullable=False
+    )
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(160))
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    uploaded_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

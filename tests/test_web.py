@@ -30,6 +30,18 @@ def test_root_requires_auth_redirects_to_login() -> None:
     assert r.headers["location"] == "/login"
 
 
+def test_score_requires_auth() -> None:
+    r = client.post("/score", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+def test_document_download_requires_auth() -> None:
+    r = client.get("/tender/x/documents/1", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
 def test_login_page_renders() -> None:
     r = client.get("/login")
     assert r.status_code == 200
