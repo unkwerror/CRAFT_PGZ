@@ -110,17 +110,17 @@ class RelevanceRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def pending(self, limit: int | None = None) -> Sequence[tuple[str, str | None]]:
-        """(reestr_number, subject) для закупок в очереди со статусом 'pending'."""
+    def pending(self, limit: int | None = None) -> Sequence[Tender]:
+        """Полные карточки закупок в очереди со статусом 'pending'."""
         stmt = (
-            select(Tender.reestr_number, Tender.subject)
+            select(Tender)
             .join(AnalysisQueue, AnalysisQueue.reestr_number == Tender.reestr_number)
             .where(AnalysisQueue.status == "pending")
             .order_by(Tender.reestr_number)
         )
         if limit is not None:
             stmt = stmt.limit(limit)
-        return self.session.execute(stmt).all()  # type: ignore[return-value]
+        return self.session.execute(stmt).scalars().all()
 
     def upsert(
         self,
@@ -129,18 +129,16 @@ class RelevanceRepository:
         score: int,
         verdict: str,
         decided_by: str,
-        matched: list[dict[str, object]],
-        anti_matched: list[dict[str, object]],
-        llm_reason: str | None,
+        summary: str | None,
+        factors: dict[str, object],
     ) -> None:
         values = {
             "reestr_number": reestr_number,
             "score": score,
             "verdict": verdict,
             "decided_by": decided_by,
-            "matched": matched,
-            "anti_matched": anti_matched,
-            "llm_reason": llm_reason,
+            "summary": summary,
+            "factors": factors,
         }
         stmt = insert(TenderRelevance).values(**values)
         stmt = stmt.on_conflict_do_update(
@@ -149,9 +147,8 @@ class RelevanceRepository:
                 "score": stmt.excluded.score,
                 "verdict": stmt.excluded.verdict,
                 "decided_by": stmt.excluded.decided_by,
-                "matched": stmt.excluded.matched,
-                "anti_matched": stmt.excluded.anti_matched,
-                "llm_reason": stmt.excluded.llm_reason,
+                "summary": stmt.excluded.summary,
+                "factors": stmt.excluded.factors,
                 "scored_at": func.now(),
             },
         )

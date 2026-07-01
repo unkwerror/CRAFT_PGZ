@@ -107,7 +107,7 @@ class IngestionRun(Base):
 
 
 class TenderRelevance(Base):
-    """Оценка релевантности закупки (Фаза 1): score + вердикт + причины."""
+    """Оценка закупки: score 0–100, вердикт, резюме от Claude и объективные факторы."""
 
     __tablename__ = "tender_relevance"
 
@@ -116,10 +116,9 @@ class TenderRelevance(Base):
     )
     score: Mapped[int] = mapped_column(Integer, nullable=False)
     verdict: Mapped[str] = mapped_column(String(16), nullable=False)  # relevant|maybe|noise
-    decided_by: Mapped[str] = mapped_column(String(16), nullable=False)  # rules|mock|yandex
-    matched: Mapped[list[dict[str, object]]] = mapped_column(JSONB, default=list)
-    anti_matched: Mapped[list[dict[str, object]]] = mapped_column(JSONB, default=list)
-    llm_reason: Mapped[str | None] = mapped_column(Text)
+    decided_by: Mapped[str] = mapped_column(String(16), nullable=False)  # rules|claude
+    summary: Mapped[str | None] = mapped_column(Text)  # резюме под тендер
+    factors: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)  # объективные факторы
     scored_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

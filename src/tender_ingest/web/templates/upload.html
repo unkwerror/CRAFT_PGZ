@@ -16,8 +16,8 @@
     ошибок: {{ result.ingest.parse_failures }}.<br>
     Оценено: <b>{{ result.scored.total }}</b> →
     релевантных {{ result.scored.relevant }},
-    спорных к арбитру {{ result.scored.maybe_sent_to_llm }},
-    шум {{ result.scored.noise }}.
+    спорных {{ result.scored.maybe }},
+    шум {{ result.scored.noise }} (вызовов Claude: {{ result.scored.sent_to_llm }}).
     <a href="/" class="underline ml-1">смотреть список</a>
   </div>
   {% endif %}

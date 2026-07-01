@@ -176,6 +176,9 @@
           <a href="/tender/{{ r.reestr_number }}" class="text-slate-900 hover:underline line-clamp-2">
             {{ r.subject or '(без названия)' }}
           </a>
+          {% if r.summary %}
+          <div class="text-xs text-slate-500 mt-1 line-clamp-2">{{ r.summary }}</div>
+          {% endif %}
           <div class="text-xs text-slate-400 mt-0.5">
             {{ r.reestr_number }} · {{ r.etp or '—' }} · {{ verdict_badge(r.verdict) }}
           </div>

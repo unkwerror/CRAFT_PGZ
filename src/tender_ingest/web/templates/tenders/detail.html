@@ -19,23 +19,22 @@
   <div class="flex items-center gap-3 mb-3">
     {{ score_pill(rel.score) }}
     {{ verdict_badge(rel.verdict) }}
-    <span class="text-xs text-slate-400">решено: {{ rel.decided_by }}</span>
+    <span class="text-xs text-slate-400">оценка: {{ rel.decided_by }}</span>
   </div>
-  {% if rel.matched %}
-  <div class="flex flex-wrap gap-1.5 mb-2">
-    {% for m in rel.matched %}
-    <span class="px-2 py-0.5 rounded text-xs bg-emerald-50 text-emerald-700 border border-emerald-200">+{{ m.weight }} {{ m.label }}</span>
-    {% endfor %}
+  {% if rel.summary %}
+  <p class="text-sm text-slate-700 leading-relaxed">{{ rel.summary }}</p>
+  {% endif %}
+  {% set fx = rel.factors or {} %}
+  {% if fx %}
+  <div class="flex flex-wrap gap-1.5 mt-3">
+    {% macro chip(ok, text) %}<span class="px-2 py-0.5 rounded text-xs border {{ 'bg-emerald-50 text-emerald-700 border-emerald-200' if ok else 'bg-slate-50 text-slate-500 border-slate-200' }}">{{ text }}</span>{% endmacro %}
+    {{ chip(fx.law == '44-ФЗ', 'закон: ' ~ (fx.law or '—')) }}
+    {{ chip(fx.method_kind == 'конкурс', 'способ: ' ~ (fx.method_kind or '—')) }}
+    {{ chip(fx.has_advance, 'аванс: ' ~ ('есть' if fx.has_advance else 'нет')) }}
+    {{ chip(fx.nmck_in_band, 'НМЦ в диапазоне 2–150 млн' if fx.nmck_in_band else 'НМЦ вне диапазона') }}
+    {{ chip(fx.region_priority, 'регион: ' ~ ('приоритетный' if fx.region_priority else 'иной')) }}
   </div>
   {% endif %}
-  {% if rel.anti_matched %}
-  <div class="flex flex-wrap gap-1.5 mb-2">
-    {% for m in rel.anti_matched %}
-    <span class="px-2 py-0.5 rounded text-xs bg-red-50 text-red-700 border border-red-200">−{{ m.weight }} {{ m.label }}</span>
-    {% endfor %}
-  </div>
-  {% endif %}
-  {% if rel.llm_reason %}<p class="text-sm text-slate-500 mt-1">{{ rel.llm_reason }}</p>{% endif %}
 </div>
 {% endif %}
 

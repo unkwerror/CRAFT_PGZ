@@ -1,4 +1,4 @@
-"""Интерфейс арбитра: решает спорные случаи «релевантно / нет» с обоснованием."""
+"""Интерфейс LLM-арбитра: по тексту карточки — score 0–100 и краткое резюме."""
 
 from __future__ import annotations
 
@@ -6,19 +6,22 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel
 
+# Маркер: карточку модель пропустила (её нет в ответе батча) — повод для ретрая.
+NOT_SCORED = "не оценено моделью"
+
 
 class ArbiterVerdict(BaseModel):
-    relevant: bool
-    reason: str
+    score: int  # 0–100, выше — лучше подходит компании
+    summary: str  # краткое резюме (резюме под тендер)
     provider: str
 
 
 class RelevanceArbiter(ABC):
-    """Интерфейс LLM-арбитра релевантности. Реализация: ClaudeArbiter."""
+    """Адаптер LLM-арбитра. Реализация: ClaudeArbiter."""
 
     provider: str
 
     @abstractmethod
-    def decide(self, subject: str) -> ArbiterVerdict:
-        """Решить, релевантна ли закупка профилю архбюро, по тексту предмета."""
+    def decide_batch(self, items: list[tuple[str, str]]) -> dict[str, ArbiterVerdict]:
+        """Оценить пачку карточек [(reestr_number, card_text)] -> {reestr_number: verdict}."""
         raise NotImplementedError

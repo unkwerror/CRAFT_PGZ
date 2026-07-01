@@ -86,6 +86,7 @@ class TenderRow:
     score: int | None
     verdict: str | None
     decided_by: str | None
+    summary: str | None
 
 
 @dataclass
@@ -397,6 +398,7 @@ class WebRepository:
                     score=rel.score if rel else None,
                     verdict=rel.verdict if rel else None,
                     decided_by=rel.decided_by if rel else None,
+                    summary=rel.summary if rel else None,
                 )
             )
         return rows, total

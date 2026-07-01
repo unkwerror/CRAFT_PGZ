@@ -14,7 +14,7 @@
   {% if score is none %}
     <span class="text-slate-400 text-sm">—</span>
   {% else %}
-    {% set color = 'bg-emerald-600' if score >= 35 else ('bg-amber-500' if score > 5 else 'bg-slate-400') %}
+    {% set color = 'bg-emerald-600' if score >= 60 else ('bg-amber-500' if score >= 35 else 'bg-slate-400') %}
     <span class="inline-flex items-center justify-center w-10 h-7 rounded text-white text-sm font-semibold {{ color }}">{{ score }}</span>
   {% endif %}
 {% endmacro %}

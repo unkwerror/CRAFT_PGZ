@@ -41,11 +41,11 @@ def ingest_cmd(file_: Path) -> None:
 @main.command("score")
 @click.option("--limit", type=int, default=None, help="Сколько закупок из очереди оценить")
 def score_cmd(limit: int | None) -> None:
-    """Оценить релевантность закупок из очереди: правила -> (maybe) LLM-арбитр."""
+    """Оценить закупки из очереди: факторы -> Claude (score + резюме)."""
     summary = score_pending(limit=limit)
     click.echo(
-        f"total={summary.total} relevant={summary.relevant} "
-        f"maybe_to_llm={summary.maybe_sent_to_llm} noise={summary.noise}"
+        f"total={summary.total} relevant={summary.relevant} maybe={summary.maybe} "
+        f"noise={summary.noise} claude_calls={summary.sent_to_llm}"
     )
 
 
