@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Стоп-лист заказчиков{% endblock %}
+{% block content %}
+
+{% if msg %}
+<div class="mb-4 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5">{{ msg }}</div>
+{% endif %}
+
+<div class="mb-4">
+  <h1 class="text-xl font-semibold">Стоп-лист заказчиков</h1>
+  <p class="text-sm text-slate-500 mt-1">
+    Заказчики по ИНН, с которыми бюро не работает. Их закупки автоматически помечаются
+    «не подходит» и не отправляются в ИИ-скоринг. Помимо этого списка захардкожены
+    Россети и ЕЭСК (по названию).
+  </p>
+</div>
+
+<div class="bg-white rounded-lg border border-slate-200 p-4 mb-6">
+  <form action="/blacklist" method="post" class="flex flex-wrap gap-3 items-end">
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">ИНН <span class="text-red-500">*</span></label>
+      <input name="inn" required inputmode="numeric" placeholder="7202100000"
+             class="w-40 border border-slate-300 rounded-md px-3 py-1.5 text-sm">
+    </div>
+    <div class="grow min-w-[200px]">
+      <label class="block text-xs text-slate-500 mb-1">Название (необязательно)</label>
+      <input name="name" placeholder="ПАО «…»"
+             class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm">
+    </div>
+    <div class="grow min-w-[200px]">
+      <label class="block text-xs text-slate-500 mb-1">Причина (необязательно)</label>
+      <input name="reason" placeholder="долги по оплате, конфликт…"
+             class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm">
+    </div>
+    <button class="bg-slate-900 text-white rounded-md px-4 py-1.5 text-sm hover:bg-slate-700">Добавить в стоп-лист</button>
+  </form>
+</div>
+
+<div class="text-sm text-slate-500 mb-2">В стоп-листе: {{ entries | length }}</div>
+
+<div class="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100">
+  {% for e in entries %}
+  <div class="flex items-center justify-between gap-4 px-4 py-3">
+    <div class="min-w-0">
+      <div class="flex items-center gap-2">
+        <span class="font-mono text-sm font-medium text-slate-900">{{ e.inn }}</span>
+        {% if e.name %}<span class="text-sm text-slate-600 truncate">{{ e.name }}</span>{% endif %}
+      </div>
+      {% if e.reason %}<div class="text-xs text-slate-400 mt-0.5">{{ e.reason }}</div>{% endif %}
+    </div>
+    <div class="flex items-center gap-3 shrink-0 text-xs text-slate-400">
+      <span>{{ e.created_at | date_ru }}</span>
+      <form action="/blacklist/{{ e.id }}/delete" method="post"
+            onsubmit="return confirm('Убрать ИНН {{ e.inn }} из стоп-листа?')">
+        <button class="text-slate-400 hover:text-red-600">удалить</button>
+      </form>
+    </div>
+  </div>
+  {% else %}
+  <div class="px-4 py-8 text-center text-slate-400 text-sm">Стоп-лист пуст. Добавьте ИНН заказчика выше.</div>
+  {% endfor %}
+</div>
+
+{% endblock %}

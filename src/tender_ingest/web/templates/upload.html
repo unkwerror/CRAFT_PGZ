@@ -11,10 +11,13 @@
   {% if result %}
   <div class="mb-4 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3">
     <div class="font-medium mb-1">Загружено: {{ result.filename }}</div>
-    Строк: <b>{{ result.ingest.rows_total }}</b>, сохранено: <b>{{ result.ingest.tenders_upserted }}</b>,
-    ошибок: {{ result.ingest.parse_failures }}.<br>
-    Теперь запустите ИИ-оценку кнопкой «Оценить ИИ» на
-    <a href="/" class="underline font-medium">списке закупок</a>.
+    Строк: <b>{{ result.ingest.rows_total }}</b> ·
+    новых: <b>{{ result.ingest.tenders_new }}</b> ·
+    уже было: <b>{{ result.ingest.tenders_existing }}</b>{% if result.ingest.parse_failures %} · ошибок: {{ result.ingest.parse_failures }}{% endif %}.<br>
+    <span class="text-emerald-700">Уже известные карточки повторно в ИИ не пойдут.</span>
+    {% if result.ingest.tenders_new %}Запустите ИИ-оценку кнопкой «Оценить новые» на
+    <a href="/" class="underline font-medium">списке</a> — оценятся только новые.{% else %}
+    Новых карточек нет — оценивать нечего.{% endif %}
   </div>
   {% endif %}
 

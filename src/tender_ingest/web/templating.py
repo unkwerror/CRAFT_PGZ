@@ -36,39 +36,17 @@ def date_ru(value: dt.datetime | None, with_time: bool = False) -> str:
 
 
 def qs(f: Filters, **overrides: object) -> str:
-    """Query-строка из всех текущих фильтров с переопределениями (пагинация/сортировка)."""
+    """Query-строка из текущих фильтров с переопределениями (пагинация/сортировка)."""
     params: dict[str, object] = {
         "search": f.search,
         "exact": "1" if f.exact else None,
         "exclude": f.exclude,
-        "customer": f.customer,
-        "delivery": f.delivery,
-        "laws": f.laws,
-        "stages": f.stages,
         "verdict": f.verdict,
         "region_code": f.region_code,
-        "purchase_method": f.purchase_method,
-        "etp": f.etp,
-        "smp_sono": f.smp_sono,
-        "decided_by": f.decided_by,
-        "currency": f.currency,
-        "source": f.source,
+        "law": f.law,
         "nmck_min": f.nmck_min,
         "nmck_max": f.nmck_max,
-        "nmck_none": "1" if f.nmck_none else None,
-        "bid_min": f.bid_min,
-        "bid_max": f.bid_max,
-        "bid_none": "1" if f.bid_none else None,
-        "contract_min": f.contract_min,
-        "contract_max": f.contract_max,
-        "contract_none": "1" if f.contract_none else None,
-        "advance": f.advance,
-        "score_min": f.score_min,
-        "score_max": f.score_max,
-        "publish_from": f.publish_from,
-        "publish_to": f.publish_to,
-        "deadline_from": f.deadline_from,
-        "deadline_to": f.deadline_to,
+        "upload": f.upload,
         "sort": f.sort,
         "page": f.page,
     }

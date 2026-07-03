@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Маркер: карточку модель пропустила (её нет в ответе батча) — повод для ретрая.
 NOT_SCORED = "не оценено моделью"
@@ -15,7 +15,10 @@ NOT_SCORED_SCORE = 45
 
 class ArbiterVerdict(BaseModel):
     score: int  # 0–100, выше — лучше подходит компании
-    summary: str  # краткое резюме (резюме под тендер)
+    summary: str  # краткий вывод-рекомендация (2–4 предложения)
+    reasoning: str = ""  # развёрнутое обоснование по рубрике (рассуждение перед баллом)
+    confidence: int = 0  # 0–100, насколько модель уверена в оценке
+    red_flags: list[str] = Field(default_factory=list)  # риски/настораживающие факторы
     provider: str
 
 

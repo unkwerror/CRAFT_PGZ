@@ -1,14 +1,20 @@
 """ClaudeArbiter — многофакторный скоринг закупок на Claude (Anthropic API).
 
 Оценивает закупки ПАЧКОЙ: карточки со всеми полями идут в один запрос, на выходе —
-массив {reestr_number, score, summary} (structured output, строгий JSON). System-промпт
-с профилем и рубрикой кэшируется. При сбое/пропуске строки — score 0 с пометкой, чтобы
+массив {reestr_number, reasoning, red_flags, score, confidence, summary} (structured
+output, строгий JSON). При сбое/пропуске строки — score из fallback с пометкой, чтобы
 прогон не падал и каждая закупка получила запись.
+
+PROMPT CACHING: системный промпт (~2.4k токенов: профиль КРАФТ + рубрика) помечен
+cache_control=ephemeral. Он одинаков для всех карточек, поэтому кэшируется один раз, а
+последующие батчи в прогоне читают его в ~10× дешевле. На Sonnet работает (минимальный
+кэшируемый префикс 1024 токена < 2.4k); на Opus не кэшировался (там порог 4096).
 """
 
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import anthropic
 import structlog
@@ -23,7 +29,7 @@ from tender_ingest.relevance.arbiter.prompt import BATCH_SCHEMA, SYSTEM_PROMPT, 
 
 log = structlog.get_logger()
 
-_MAX_TOKENS = 8000  # хватает на пачку (до ~20 карточек по короткому резюме)
+_MAX_TOKENS = 8000  # хватает на пачку (до ~20 карточек: reasoning ≤40 слов + summary)
 
 
 class ClaudeArbiter(RelevanceArbiter):
@@ -33,10 +39,15 @@ class ClaudeArbiter(RelevanceArbiter):
         self._client = anthropic.Anthropic(api_key=api_key)
         self._model = model
 
-    def _verdict(self, score: int, summary: str) -> ArbiterVerdict:
+    def _verdict(self, item: dict[str, Any]) -> ArbiterVerdict:
+        raw_flags = item.get("red_flags") or []
+        flags = [str(x).strip() for x in raw_flags if str(x).strip()]
         return ArbiterVerdict(
-            score=max(0, min(100, int(score))),
-            summary=str(summary).strip(),
+            score=max(0, min(100, int(item["score"]))),
+            summary=str(item["summary"]).strip(),
+            reasoning=str(item.get("reasoning") or "").strip(),
+            confidence=max(0, min(100, int(item.get("confidence") or 0))),
+            red_flags=flags,
             provider=self.provider,
         )
 
@@ -48,6 +59,9 @@ class ClaudeArbiter(RelevanceArbiter):
             resp = self._client.messages.create(
                 model=self._model,
                 max_tokens=_MAX_TOKENS,
+                # cache_control кэширует системный промпт: первый батч прогона его пишет,
+                # остальные читают дёшево (TTL 5 мин обновляется на каждом чтении, поэтому
+                # держится весь прогон). Только карточки в user-сообщении уникальны.
                 system=[
                     {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
                 ],
@@ -56,9 +70,7 @@ class ClaudeArbiter(RelevanceArbiter):
             )
             text = "".join(getattr(block, "text", "") for block in resp.content)
             for item in json.loads(text)["results"]:
-                by_reestr[str(item["reestr_number"])] = self._verdict(
-                    item["score"], item["summary"]
-                )
+                by_reestr[str(item["reestr_number"])] = self._verdict(item)
         except (
             anthropic.APIError,
             anthropic.APIConnectionError,

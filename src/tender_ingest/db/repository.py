@@ -10,16 +10,18 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Sequence
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from tender_ingest.db.models import (
     AnalysisQueue,
+    BlacklistCustomer,
     IngestionRun,
     Tender,
     TenderRaw,
     TenderRelevance,
+    TenderUpload,
 )
 from tender_ingest.sources.base import RawTender
 
@@ -105,6 +107,18 @@ class TenderRepository:
         q_stmt = q_stmt.on_conflict_do_nothing(index_elements=[AnalysisQueue.reestr_number])
         self.session.execute(q_stmt)
 
+    def existing_reestr_numbers(self) -> set[str]:
+        """Все номера, уже сохранённые в базе — для подсчёта новых/известных в выгрузке."""
+        return set(self.session.execute(select(Tender.reestr_number)).scalars().all())
+
+    def add_upload_membership(self, run_id: int, reestr_number: str) -> None:
+        """Пометить, что закупка пришла из этой выгрузки (run_id). Повтор — no-op."""
+        stmt = insert(TenderUpload).values(run_id=run_id, reestr_number=reestr_number)
+        stmt = stmt.on_conflict_do_nothing(
+            index_elements=[TenderUpload.run_id, TenderUpload.reestr_number]
+        )
+        self.session.execute(stmt)
+
 
 class RelevanceRepository:
     def __init__(self, session: Session) -> None:
@@ -136,6 +150,9 @@ class RelevanceRepository:
         decided_by: str,
         summary: str | None,
         factors: dict[str, object],
+        reasoning: str | None = None,
+        confidence: int | None = None,
+        red_flags: list[str] | None = None,
     ) -> None:
         values = {
             "reestr_number": reestr_number,
@@ -143,6 +160,9 @@ class RelevanceRepository:
             "verdict": verdict,
             "decided_by": decided_by,
             "summary": summary,
+            "reasoning": reasoning,
+            "confidence": confidence,
+            "red_flags": red_flags,
             "factors": factors,
         }
         stmt = insert(TenderRelevance).values(**values)
@@ -153,6 +173,9 @@ class RelevanceRepository:
                 "verdict": stmt.excluded.verdict,
                 "decided_by": stmt.excluded.decided_by,
                 "summary": stmt.excluded.summary,
+                "reasoning": stmt.excluded.reasoning,
+                "confidence": stmt.excluded.confidence,
+                "red_flags": stmt.excluded.red_flags,
                 "factors": stmt.excluded.factors,
                 "scored_at": func.now(),
             },
@@ -163,6 +186,41 @@ class RelevanceRepository:
             .where(AnalysisQueue.reestr_number == reestr_number)
             .values(status="scored")
         )
+
+
+class BlacklistRepository:
+    """Стоп-лист заказчиков по ИНН, управляемый из веба (таблица blacklist_customers)."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def all_inns(self) -> frozenset[str]:
+        """Множество ИНН из стоп-листа для быстрого матчинга в скоринге."""
+        rows = self.session.execute(select(BlacklistCustomer.inn)).scalars().all()
+        return frozenset(rows)
+
+    def list_all(self) -> Sequence[BlacklistCustomer]:
+        return (
+            self.session.execute(
+                select(BlacklistCustomer).order_by(BlacklistCustomer.created_at.desc())
+            )
+            .scalars()
+            .all()
+        )
+
+    def add(self, inn: str, name: str | None, reason: str | None) -> None:
+        """Добавить ИНН в стоп-лист (повторный ИНН обновляет имя/причину)."""
+        stmt = insert(BlacklistCustomer).values(inn=inn, name=name, reason=reason)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[BlacklistCustomer.inn],
+            set_={"name": stmt.excluded.name, "reason": stmt.excluded.reason},
+        )
+        self.session.execute(stmt)
+        self.session.commit()
+
+    def delete(self, entry_id: int) -> None:
+        self.session.execute(delete(BlacklistCustomer).where(BlacklistCustomer.id == entry_id))
+        self.session.commit()
 
 
 class RunRepository:
@@ -184,6 +242,8 @@ class RunRepository:
         parse_failures: int,
         status: str,
         error: str | None = None,
+        tenders_new: int | None = None,
+        tenders_existing: int | None = None,
     ) -> None:
         self.session.execute(
             update(IngestionRun)
@@ -193,6 +253,8 @@ class RunRepository:
                 rows_total=rows_total,
                 tenders_upserted=tenders_upserted,
                 parse_failures=parse_failures,
+                tenders_new=tenders_new,
+                tenders_existing=tenders_existing,
                 status=status,
                 error=error,
             )

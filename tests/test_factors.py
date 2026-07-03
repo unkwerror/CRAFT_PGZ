@@ -13,6 +13,7 @@ def _card(**kw: object) -> SimpleNamespace:
         "nmck": Decimal("8000000"),
         "region_code": "72",
         "customer_name": "Администрация города Тюмени",
+        "customer_inn": "7202000000",
         "stage": "Подача заявок",
     }
     base.update(kw)
@@ -40,6 +41,17 @@ def test_auction_is_soft_not_hard() -> None:
 def test_excluded_customer() -> None:
     assert hard_exclusion(compute_factors(_card(customer_name="ПАО «Россети Урал»"))) is not None
     assert hard_exclusion(compute_factors(_card(customer_name="АО «ЕЭСК»"))) is not None
+
+
+def test_inn_blacklist() -> None:
+    blacklist = frozenset({"7202000000"})
+    f = compute_factors(_card(customer_inn="7202000000"), blacklist)
+    assert f.inn_blacklisted is True
+    assert "ИНН" in (hard_exclusion(f) or "")
+    # тот же ИНН, но пустой стоп-лист -> не исключаем
+    assert compute_factors(_card(customer_inn="7202000000")).inn_blacklisted is False
+    # другой ИНН при непустом стоп-листе -> не исключаем
+    assert compute_factors(_card(customer_inn="6600000000"), blacklist).inn_blacklisted is False
 
 
 def test_inactive_stage_hard_excluded() -> None:

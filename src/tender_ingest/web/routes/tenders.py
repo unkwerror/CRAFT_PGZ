@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+import datetime as dt
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 
 from tender_ingest.db.session import get_session_factory
+from tender_ingest.documents.prompt import FIELD_LABELS
+from tender_ingest.web.doc_analysis_job import job as doc_analysis_job
 from tender_ingest.web.repository import PAGE_SIZE, DocumentRepository, Filters, WebRepository
+from tender_ingest.web.scoring_job import job
 from tender_ingest.web.security import require_auth
 from tender_ingest.web.templating import templates
+
+_FINISHED_BANNER_SEC = 120  # сколько секунд показывать итог завершённого прогона
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 
@@ -21,34 +26,12 @@ def index(  # noqa: PLR0913 — плоский разбор query-парамет
     search: str | None = None,
     exact: str | None = None,
     exclude: str | None = None,
-    customer: str | None = None,
-    delivery: str | None = None,
-    laws: Annotated[list[str] | None, Query()] = None,
-    stages: Annotated[list[str] | None, Query()] = None,
     verdict: str | None = None,
     region_code: str | None = None,
-    purchase_method: str | None = None,
-    etp: str | None = None,
-    smp_sono: str | None = None,
-    decided_by: str | None = None,
-    currency: str | None = None,
-    source: str | None = None,
+    law: str | None = None,
     nmck_min: str | None = None,
     nmck_max: str | None = None,
-    nmck_none: str | None = None,
-    bid_min: str | None = None,
-    bid_max: str | None = None,
-    bid_none: str | None = None,
-    contract_min: str | None = None,
-    contract_max: str | None = None,
-    contract_none: str | None = None,
-    advance: str | None = None,
-    score_min: str | None = None,
-    score_max: str | None = None,
-    publish_from: str | None = None,
-    publish_to: str | None = None,
-    deadline_from: str | None = None,
-    deadline_to: str | None = None,
+    upload: str | None = None,
     sort: str | None = None,
     page: str | None = None,
     msg: str | None = None,
@@ -57,34 +40,12 @@ def index(  # noqa: PLR0913 — плоский разбор query-парамет
         search=search,
         exact=exact,
         exclude=exclude,
-        customer=customer,
-        delivery=delivery,
-        laws=laws,
-        stages=stages,
         verdict=verdict,
         region_code=region_code,
-        purchase_method=purchase_method,
-        etp=etp,
-        smp_sono=smp_sono,
-        decided_by=decided_by,
-        currency=currency,
-        source=source,
+        law=law,
         nmck_min=nmck_min,
         nmck_max=nmck_max,
-        nmck_none=nmck_none,
-        bid_min=bid_min,
-        bid_max=bid_max,
-        bid_none=bid_none,
-        contract_min=contract_min,
-        contract_max=contract_max,
-        contract_none=contract_none,
-        advance=advance,
-        score_min=score_min,
-        score_max=score_max,
-        publish_from=publish_from,
-        publish_to=publish_to,
-        deadline_from=deadline_from,
-        deadline_to=deadline_to,
+        upload=upload,
         sort=sort,
         page=page,
     )
@@ -94,6 +55,13 @@ def index(  # noqa: PLR0913 — плоский разбор query-парамет
         facets = repo.facets()
         pending = repo.pending_count()
     total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+
+    scoring = job.snapshot()
+    scoring_msg = None
+    if not scoring.running and scoring.message and scoring.finished_at is not None:
+        age = (dt.datetime.now(dt.UTC) - scoring.finished_at).total_seconds()
+        if age < _FINISHED_BANNER_SEC:
+            scoring_msg = scoring.message
     return templates.TemplateResponse(
         request,
         "tenders/list.html",
@@ -106,12 +74,14 @@ def index(  # noqa: PLR0913 — плоский разбор query-парамет
             "total_pages": total_pages,
             "pending": pending,
             "msg": msg,
+            "scoring": scoring,
+            "scoring_msg": scoring_msg,
         },
     )
 
 
 @router.get("/tender/{reestr_number}", response_class=HTMLResponse)
-def detail(request: Request, reestr_number: str) -> HTMLResponse:
+def detail(request: Request, reestr_number: str, msg: str | None = None) -> HTMLResponse:
     with get_session_factory()() as session:
         found = WebRepository(session).get(reestr_number)
         if found is None:
@@ -119,7 +89,30 @@ def detail(request: Request, reestr_number: str) -> HTMLResponse:
                 request, "not_found.html", {"reestr_number": reestr_number}, status_code=404
             )
         tender, rel = found
-        documents = DocumentRepository(session).list_for(reestr_number)
+        docs_repo = DocumentRepository(session)
+        documents = docs_repo.list_for(reestr_number)
+        analyses = docs_repo.latest_analyses_for(reestr_number)
+
+        dj = doc_analysis_job.snapshot()
+        doc_job_msg = None
+        if (
+            not dj.running
+            and dj.message
+            and dj.finished_at is not None
+            and (dt.datetime.now(dt.UTC) - dj.finished_at).total_seconds() < _FINISHED_BANNER_SEC
+        ):
+            doc_job_msg = dj.message
         return templates.TemplateResponse(
-            request, "tenders/detail.html", {"t": tender, "rel": rel, "documents": documents}
+            request,
+            "tenders/detail.html",
+            {
+                "t": tender,
+                "rel": rel,
+                "documents": documents,
+                "analyses": analyses,
+                "field_labels": FIELD_LABELS,
+                "msg": msg,
+                "doc_job": dj,
+                "doc_job_msg": doc_job_msg,
+            },
         )

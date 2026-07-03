@@ -38,7 +38,8 @@ class Factors:
     nmck_in_band: bool  # 2–150 млн ₽
     region_code: str | None
     region_priority: bool
-    customer_excluded: bool
+    customer_excluded: bool  # имя в захардкоженном стоп-листе (Россети/ЕЭСК)
+    inn_blacklisted: bool  # ИНН в стоп-листе бюро (таблица blacklist_customers)
     stage: str | None
     stage_active: bool  # этап «Подача заявок»
 
@@ -52,6 +53,7 @@ class Factors:
             "region_code": self.region_code,
             "region_priority": self.region_priority,
             "customer_excluded": self.customer_excluded,
+            "inn_blacklisted": self.inn_blacklisted,
             "stage": self.stage,
             "stage_active": self.stage_active,
         }
@@ -66,10 +68,11 @@ class _CardLike(Protocol):
     nmck: Decimal | None
     region_code: str | None
     customer_name: str | None
+    customer_inn: str | None
     stage: str | None
 
 
-def compute_factors(t: _CardLike) -> Factors:
+def compute_factors(t: _CardLike, blacklist_inns: frozenset[str] = frozenset()) -> Factors:
     method = t.purchase_method or ""
     if _AUCTION.search(method):
         kind: str | None = "аукцион"
@@ -81,6 +84,7 @@ def compute_factors(t: _CardLike) -> Factors:
         kind = None
 
     nmck = t.nmck
+    inn = (t.customer_inn or "").strip()
     return Factors(
         law=t.law,
         method_kind=kind,
@@ -89,9 +93,10 @@ def compute_factors(t: _CardLike) -> Factors:
         nmck_in_band=(nmck is not None and NMCK_MIN <= nmck <= NMCK_MAX),
         region_code=t.region_code,
         region_priority=(t.region_code in PRIORITY_REGIONS),
-        # Стоп-лист по имени — быстрый пре-фильтр; при появлении таблицы известных
-        # ИНН матчить по ИНН как основной признак (см. FIXES/analysis).
+        # Захардкоженный стоп-лист по имени (Россети/ЕЭСК) — быстрый пре-фильтр.
         customer_excluded=bool(_EXCLUDED_CUSTOMER.search(t.customer_name or "")),
+        # Управляемый бюро стоп-лист по ИНН (blacklist_customers).
+        inn_blacklisted=(inn in blacklist_inns if inn else False),
         stage=t.stage,
         stage_active=((t.stage or "").strip().lower() == "подача заявок"),
     )
@@ -105,6 +110,8 @@ def hard_exclusion(f: Factors) -> str | None:
     """
     if f.customer_excluded:
         return "заказчик в стоп-листе (Россети / ЕЭСК)"
+    if f.inn_blacklisted:
+        return "заказчик в стоп-листе бюро (по ИНН)"
     if f.stage is not None and not f.stage_active:
         return f"приём заявок неактивен (этап: {f.stage})"
     if f.nmck is not None and (f.nmck < NMCK_HARD_MIN or f.nmck > NMCK_HARD_MAX):

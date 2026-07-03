@@ -42,7 +42,7 @@ def upload(request: Request, file: Annotated[UploadFile, File()]) -> HTMLRespons
         tmp.write(data)
         tmp.flush()
         try:
-            ingest = ingest_excel(Path(tmp.name))
+            ingest = ingest_excel(Path(tmp.name), file_label=name)
         except Exception as exc:  # noqa: BLE001 — показываем пользователю любую ошибку парсинга
             log.warning("web_upload_failed", filename=name, error=str(exc))
             return _error(request, f"Не удалось разобрать файл: {exc}")

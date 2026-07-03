@@ -12,6 +12,7 @@ import datetime as dt
 from decimal import Decimal
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -103,6 +104,8 @@ class IngestionRun(Base):
     rows_total: Mapped[int] = mapped_column(Integer, default=0)
     tenders_upserted: Mapped[int] = mapped_column(Integer, default=0)
     parse_failures: Mapped[int] = mapped_column(Integer, default=0)
+    tenders_new: Mapped[int | None] = mapped_column(Integer)  # впервые увиденные в этой выгрузке
+    tenders_existing: Mapped[int | None] = mapped_column(Integer)  # уже были (не переоцениваются)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
     error: Mapped[str | None] = mapped_column(Text)
 
@@ -118,9 +121,47 @@ class TenderRelevance(Base):
     score: Mapped[int] = mapped_column(Integer, nullable=False)
     verdict: Mapped[str] = mapped_column(String(16), nullable=False)  # relevant|maybe|noise
     decided_by: Mapped[str] = mapped_column(String(16), nullable=False)  # rules|claude
-    summary: Mapped[str | None] = mapped_column(Text)  # резюме под тендер
+    summary: Mapped[str | None] = mapped_column(Text)  # краткий вывод-рекомендация
+    reasoning: Mapped[str | None] = mapped_column(Text)  # развёрнутое обоснование по рубрике
+    confidence: Mapped[int | None] = mapped_column(Integer)  # 0–100, уверенность модели
+    red_flags: Mapped[list[str] | None] = mapped_column(JSONB)  # риски (список строк)
     factors: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)  # объективные факторы
     scored_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class TenderUpload(Base):
+    """Членство закупки в выгрузке (many-to-many): одна и та же карточка может прийти
+
+    из нескольких выгрузок (пересечение по номеру). Позволяет фильтровать список по
+    выгрузке («переключение между выгрузками»). run_id — это ingestion_runs.id.
+    """
+
+    __tablename__ = "tender_uploads"
+
+    run_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("ingestion_runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    reestr_number: Mapped[str] = mapped_column(
+        Text, ForeignKey("tenders.reestr_number", ondelete="CASCADE"), primary_key=True
+    )
+
+
+class BlacklistCustomer(Base):
+    """Стоп-лист заказчиков по ИНН (управляется из веба). Матчинг — в scorer/factors.
+
+    Дополняет захардкоженный стоп-лист по имени (Россети/ЕЭСК) из relevance/factors.py:
+    здесь бюро само ведёт список ИНН, с кем не работаем → жёсткое исключение из скоринга.
+    """
+
+    __tablename__ = "blacklist_customers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    inn: Mapped[str] = mapped_column(String(16), unique=True, index=True, nullable=False)
+    name: Mapped[str | None] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
@@ -139,5 +180,26 @@ class TenderDocument(Base):
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     uploaded_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class DocumentAnalysis(Base):
+    """Бриф по ТЗ от LLM (семантический разбор + цитаты). Append-only: показываем последний."""
+
+    __tablename__ = "document_analyses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    document_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tender_documents.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    reestr_number: Mapped[str] = mapped_column(
+        Text, ForeignKey("tenders.reestr_number", ondelete="CASCADE"), nullable=False
+    )
+    model: Mapped[str] = mapped_column(String(40), nullable=False)
+    brief: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)  # summary+поля+findings
+    pages: Mapped[int | None] = mapped_column(Integer)
+    truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import datetime as dt
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
@@ -74,34 +73,35 @@ def test_filters_from_query_cleans_garbage() -> None:
     assert f.sort == "score"
     assert f.search is None
     assert f.page == 1
-    assert f.any_advanced() is False
 
 
-def test_filters_from_query_parses_ranges_dates_multi() -> None:
+def test_filters_from_query_parses_ranges_and_selects() -> None:
     f = Filters.from_query(
         search="проектная документация",
         exclude=" поставка аренда ",
-        laws=["44-ФЗ", "223-ФЗ", "  "],
+        verdict="relevant",
+        region_code="72",
+        law="44-ФЗ",
         nmck_min="1 000 000",
-        bid_min="50000",
-        advance="with",
-        nmck_none="1",
-        publish_from="2026-06-01",
-        deadline_to="не-дата",
-        customer=" ООО Ромашка ",
+        nmck_max="150000000",
+        exact="1",
     )
     assert f.nmck_min == Decimal("1000000")
-    assert f.bid_min == Decimal("50000")
-    assert f.laws == ["44-ФЗ", "223-ФЗ"]  # пустое отброшено
+    assert f.nmck_max == Decimal("150000000")
     assert f.exclude == "поставка аренда"
-    assert f.advance == "with"
-    assert f.nmck_none is True
-    assert f.publish_from == dt.date(2026, 6, 1)
-    assert f.deadline_to is None  # кривая дата -> None, без 422
-    assert f.customer == "ООО Ромашка"
-    assert f.any_advanced() is True
+    assert f.verdict == "relevant"
+    assert f.region_code == "72"
+    assert f.law == "44-ФЗ"
+    assert f.exact is True
 
 
-def test_filters_advance_invalid_dropped() -> None:
-    assert Filters.from_query(advance="bogus").advance is None
-    assert Filters.from_query(laws=[]).any_advanced() is False
+def test_filters_bad_nmck_dropped() -> None:
+    f = Filters.from_query(nmck_min="не-число", nmck_max="")
+    assert f.nmck_min is None
+    assert f.nmck_max is None
+
+
+def test_filters_upload_parsed() -> None:
+    assert Filters.from_query(upload="3").upload == 3
+    assert Filters.from_query(upload="мусор").upload is None
+    assert Filters.from_query().upload is None

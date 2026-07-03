@@ -2,60 +2,35 @@
 {% from "_macros.html" import verdict_badge, score_pill %}
 {% block title %}Закупки{% endblock %}
 
-{% macro inp(name, label, value, type='text', ph='') %}
-<div>
-  <label class="block text-xs text-slate-500 mb-1">{{ label }}</label>
-  <input name="{{ name }}" value="{{ value if value is not none else '' }}" type="{{ type }}" placeholder="{{ ph }}"
-         class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
-</div>
-{% endmacro %}
-
-{% macro sel(name, label, current, options) %}
-<div>
-  <label class="block text-xs text-slate-500 mb-1">{{ label }}</label>
-  <select name="{{ name }}" class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
-    <option value="">все</option>
-    {% for o in options %}<option value="{{ o }}" {{ 'selected' if current == o }}>{{ o }}</option>{% endfor %}
-  </select>
-</div>
-{% endmacro %}
-
-{% macro rng(nmin, nmax, label, vmin, vmax, type='number') %}
-<div>
-  <label class="block text-xs text-slate-500 mb-1">{{ label }}</label>
-  <div class="flex items-center gap-1">
-    <input name="{{ nmin }}" value="{{ vmin if vmin is not none else '' }}" type="{{ type }}" placeholder="от"
-           class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
-    <span class="text-slate-400">–</span>
-    <input name="{{ nmax }}" value="{{ vmax if vmax is not none else '' }}" type="{{ type }}" placeholder="до"
-           class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
-  </div>
-</div>
-{% endmacro %}
-
-{% macro chk(name, label, checked) %}
-<label class="flex items-center gap-2 text-sm self-end pb-1.5">
-  <input type="checkbox" name="{{ name }}" value="1" {{ 'checked' if checked }}> {{ label }}
-</label>
-{% endmacro %}
-
-{% macro chkgroup(name, label, options, selected) %}
-<div class="col-span-2 md:col-span-4">
-  <label class="block text-xs text-slate-500 mb-1">{{ label }}</label>
-  <div class="flex flex-wrap gap-2">
-    {% for o in options %}
-    <label class="flex items-center gap-1 text-sm bg-slate-50 border border-slate-200 rounded px-2 py-1 cursor-pointer">
-      <input type="checkbox" name="{{ name }}" value="{{ o }}" {{ 'checked' if o in selected }}> {{ o }}
-    </label>
-    {% endfor %}
-  </div>
-</div>
-{% endmacro %}
-
 {% block content %}
 
 {% if msg %}
 <div class="mb-4 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5">{{ msg }}</div>
+{% endif %}
+
+{% if scoring and scoring.running %}
+<div class="mb-4 text-sm text-blue-800 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center gap-2">
+  <svg class="animate-spin h-4 w-4 text-blue-600 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"></path>
+  </svg>
+  <span id="score-progress-text">Идёт ИИ-оценка…{% if scoring.total %} {{ scoring.done }} / {{ scoring.total }}{% endif %}</span>
+</div>
+<script>
+(function () {
+  const el = document.getElementById('score-progress-text');
+  const poll = setInterval(async function () {
+    try {
+      const r = await fetch('/score/status', { headers: { 'Accept': 'application/json' } });
+      const s = await r.json();
+      if (!s.running) { clearInterval(poll); window.location.href = '/'; return; }
+      el.textContent = 'Идёт ИИ-оценка…' + (s.total ? ' ' + s.done + ' / ' + s.total : '');
+    } catch (e) { /* сеть моргнула — повторим на следующем тике */ }
+  }, 3000);
+})();
+</script>
+{% elif scoring_msg %}
+<div class="mb-4 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5">{{ scoring_msg }}</div>
 {% endif %}
 
 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -69,35 +44,83 @@
     </div>
   </div>
   <div class="flex items-center gap-2">
+    {% if scoring and scoring.running %}
+    <span class="text-sm text-blue-700">ИИ-оценка идёт…</span>
+    {% else %}
     {% if pending and pending > 0 %}
     <form action="/score" method="post"
-          onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Оцениваю…';">
+          onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Запускаю…';">
       <button class="bg-emerald-600 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-emerald-700 disabled:opacity-60">
         Оценить новые · {{ pending }}
       </button>
     </form>
     {% endif %}
     <form action="/score" method="post"
-          onsubmit="if(!confirm('Переоценить ВСЕ закупки заново через ИИ? Это займёт до минуты.'))return false; this.querySelector('button').disabled=true; this.querySelector('button').textContent='Оцениваю…';">
+          onsubmit="if(!confirm('Переоценить ВСЕ закупки заново через ИИ? На большой базе это минуты.'))return false; this.querySelector('button').disabled=true; this.querySelector('button').textContent='Запускаю…';">
       <input type="hidden" name="all" value="1">
       <button class="border border-slate-300 bg-white text-slate-700 rounded-md px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-60">
         {{ 'Оценить ИИ' if not pending or pending == 0 else 'Переоценить всё' }}
       </button>
     </form>
+    {% endif %}
   </div>
 </div>
 
 <form method="get" class="bg-white rounded-lg p-4 mb-4 shadow-sm border border-slate-200">
   <div class="flex flex-wrap gap-3 items-end">
-    <div class="grow min-w-[240px]">
+    <div class="grow min-w-[220px]">
       <label class="block text-xs text-slate-500 mb-1">Ключевые слова</label>
       <input name="search" value="{{ f.search or '' }}" placeholder="проектная документация реставрация…"
              class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm">
     </div>
-    <div class="grow min-w-[200px]">
+    <div class="grow min-w-[180px]">
       <label class="block text-xs text-slate-500 mb-1">Исключать слова</label>
-      <input name="exclude" value="{{ f.exclude or '' }}" placeholder="поставка аренда…"
+      <input name="exclude" value="{{ f.exclude or '' }}" placeholder="дорожн поставка аренда…"
              class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm">
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">Вердикт</label>
+      <select name="verdict" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm">
+        <option value="">все</option>
+        {% for v, label in [('relevant','подходит'),('maybe','возможно'),('auction','аукцион'),('noise','не подходит')] %}
+        <option value="{{ v }}" {{ 'selected' if f.verdict == v }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">Регион</label>
+      <select name="region_code" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm max-w-[180px]">
+        <option value="">все</option>
+        {% for code, name in facets.regions %}<option value="{{ code }}" {{ 'selected' if f.region_code == code }}>{{ code }} {{ name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">Закон</label>
+      <select name="law" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm">
+        <option value="">все</option>
+        {% for o in facets.laws %}<option value="{{ o }}" {{ 'selected' if f.law == o }}>{{ o }}</option>{% endfor %}
+      </select>
+    </div>
+    {% if facets.uploads %}
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">Выгрузка</label>
+      <select name="upload" class="border border-slate-300 rounded-md px-2 py-1.5 text-sm max-w-[220px]">
+        <option value="">все выгрузки</option>
+        {% for u in facets.uploads %}
+        <option value="{{ u.id }}" {{ 'selected' if f.upload == u.id }}>{{ (u.file or '—').split('/')|last }} · {{ u.uploaded_at | date_ru }} · {{ u.count }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">НМЦ, ₽</label>
+      <div class="flex items-center gap-1">
+        <input name="nmck_min" value="{{ f.nmck_min if f.nmck_min is not none else '' }}" type="number" placeholder="от"
+               class="w-28 border border-slate-300 rounded-md px-2 py-1.5 text-sm">
+        <span class="text-slate-400">–</span>
+        <input name="nmck_max" value="{{ f.nmck_max if f.nmck_max is not none else '' }}" type="number" placeholder="до"
+               class="w-28 border border-slate-300 rounded-md px-2 py-1.5 text-sm">
+      </div>
     </div>
     <div>
       <label class="block text-xs text-slate-500 mb-1">Сортировка</label>
@@ -110,63 +133,9 @@
     <button class="bg-slate-900 text-white rounded-md px-4 py-1.5 text-sm hover:bg-slate-700">Применить</button>
     <a href="/" class="text-sm text-slate-500 hover:text-slate-800 py-1.5">сбросить</a>
   </div>
-  <div class="mt-2">{{ chk('exact', 'Точное соответствие (фраза целиком)', f.exact) }}</div>
-
-  <details class="mt-3" {{ 'open' if f.any_advanced() }}>
-    <summary class="text-sm text-slate-600 cursor-pointer select-none">Все фильтры</summary>
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-      {{ chkgroup('laws', 'Тип торгов', facets.laws, f.laws) }}
-      {{ chkgroup('stages', 'Этап', facets.stages, f.stages) }}
-    </div>
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-      <div>
-        <label class="block text-xs text-slate-500 mb-1">Вердикт</label>
-        <select name="verdict" class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
-          <option value="">все</option>
-          {% for v, label in [('relevant','подходит'),('maybe','возможно'),('auction','аукцион'),('noise','не подходит')] %}
-          <option value="{{ v }}" {{ 'selected' if f.verdict == v }}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div>
-        <label class="block text-xs text-slate-500 mb-1">Регион</label>
-        <select name="region_code" class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
-          <option value="">все</option>
-          {% for code, name in facets.regions %}<option value="{{ code }}" {{ 'selected' if f.region_code == code }}>{{ code }} {{ name }}</option>{% endfor %}
-        </select>
-      </div>
-      {{ sel('purchase_method', 'Способ отбора', f.purchase_method, facets.purchase_methods) }}
-      {{ sel('etp', 'Площадка (ЭТП)', f.etp, facets.etps) }}
-      {{ inp('customer', 'Заказчик (название или ИНН)', f.customer) }}
-      {{ inp('delivery', 'Место поставки', f.delivery) }}
-      {{ sel('smp_sono', 'Преимущества (СМП/СОНО)', f.smp_sono, facets.smp_sono) }}
-      <div>
-        <label class="block text-xs text-slate-500 mb-1">Авансирование</label>
-        <select name="advance" class="w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm">
-          <option value="">любое</option>
-          <option value="with" {{ 'selected' if f.advance == 'with' }}>с авансом</option>
-          <option value="without" {{ 'selected' if f.advance == 'without' }}>без аванса</option>
-        </select>
-      </div>
-      {{ sel('decided_by', 'Кто оценил', f.decided_by, facets.decided_by) }}
-      {{ sel('currency', 'Валюта', f.currency, facets.currencies) }}
-      {{ sel('source', 'Источник', f.source, facets.sources) }}
-    </div>
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 items-start">
-      {{ rng('nmck_min', 'nmck_max', 'Начальная цена, ₽', f.nmck_min, f.nmck_max) }}
-      {{ chk('nmck_none', 'Включать без НМЦ', f.nmck_none) }}
-      {{ rng('score_min', 'score_max', 'Оценка ИИ', f.score_min, f.score_max) }}
-      <div></div>
-      {{ rng('bid_min', 'bid_max', 'Обеспечение заявки, ₽', f.bid_min, f.bid_max) }}
-      {{ chk('bid_none', 'Без обеспечения заявки', f.bid_none) }}
-      {{ rng('contract_min', 'contract_max', 'Обеспечение контракта, ₽', f.contract_min, f.contract_max) }}
-      {{ chk('contract_none', 'Без обеспечения контракта', f.contract_none) }}
-      {{ rng('publish_from', 'publish_to', 'Опубликовано', f.publish_from, f.publish_to, 'date') }}
-      <div></div>
-      {{ rng('deadline_from', 'deadline_to', 'Окончание подачи заявок', f.deadline_from, f.deadline_to, 'date') }}
-      <div></div>
-    </div>
-  </details>
+  <label class="flex items-center gap-2 text-sm text-slate-600 mt-2">
+    <input type="checkbox" name="exact" value="1" {{ 'checked' if f.exact }}> Точное соответствие (фраза целиком)
+  </label>
 </form>
 
 <div class="text-sm text-slate-500 mb-2">Найдено: {{ total }} из {{ facets.total }}</div>
@@ -184,6 +153,14 @@
         </div>
         {% if r.summary %}
         <p class="text-[13px] leading-6 text-slate-600 mt-1.5 line-clamp-2">{{ r.summary }}</p>
+        {% endif %}
+        {% if r.red_flags %}
+        <div class="flex flex-wrap gap-1 mt-1.5">
+          {% for flag in r.red_flags[:3] %}
+          <span class="text-[11px] px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-100">⚑ {{ flag }}</span>
+          {% endfor %}
+          {% if r.red_flags | length > 3 %}<span class="text-[11px] text-slate-400 py-0.5">+{{ r.red_flags | length - 3 }}</span>{% endif %}
+        </div>
         {% endif %}
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400 mt-2">
           <span class="text-slate-600 font-medium">{{ r.nmck | money(r.currency) }}</span>

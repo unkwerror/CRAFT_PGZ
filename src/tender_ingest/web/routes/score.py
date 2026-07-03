@@ -1,4 +1,8 @@
-"""Ручной запуск ИИ-скоринга: кнопки на списке -> POST /score -> оценка очереди."""
+"""ИИ-скоринг: кнопки на списке -> POST /score -> фоновый прогон, /score/status — прогресс.
+
+Скоринг идёт в фоне (см. web/scoring_job): на 1000+ карточках прогон занимает минуты,
+синхронный ответ упёрся бы в таймаут nginx. POST запускает поток и сразу редиректит.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +10,9 @@ from typing import Annotated
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
-from tender_ingest.db.repository import RelevanceRepository
-from tender_ingest.db.session import get_session_factory
-from tender_ingest.relevance.scorer import score_pending
+from tender_ingest.web.scoring_job import job
 from tender_ingest.web.security import require_auth
 
 router = APIRouter(dependencies=[Depends(require_auth)])
@@ -18,22 +20,18 @@ router = APIRouter(dependencies=[Depends(require_auth)])
 
 @router.post("/score")
 def run_scoring(request: Request, all: Annotated[str | None, Form()] = None) -> RedirectResponse:
-    """Оценить закупки. all=1 — сначала вернуть все в очередь (полная переоценка).
-
-    Блокирующий вызов на десятки секунд (батчи Claude параллельно).
-    """
-    if all:
-        with get_session_factory()() as session:
-            RelevanceRepository(session).requeue_all()
-
-    summary = score_pending()
-    if summary.total == 0:
-        msg = "Нечего оценивать — все закупки уже оценены"
-    else:
-        msg = (
-            f"Оценено {summary.total}: подходят {summary.relevant}, возможно {summary.maybe}, "
-            f"аукцион {summary.auction}, не подходят {summary.noise}"
-        )
-        if summary.skipped:
-            msg += f"; пропущено без ключа {summary.skipped}"
+    """Запустить скоринг в фоне. all=1 — сначала вернуть все в очередь (полная переоценка)."""
+    started = job.start(requeue=bool(all))
+    msg = (
+        "ИИ-скоринг запущен в фоне — прогресс появится вверху списка"
+        if started
+        else "ИИ-скоринг уже идёт — дождитесь завершения"
+    )
     return RedirectResponse(f"/?{urlencode({'msg': msg})}", status_code=303)
+
+
+@router.get("/score/status")
+def scoring_status(request: Request) -> JSONResponse:
+    """Прогресс текущего прогона (для поллинга со страницы списка)."""
+    s = job.snapshot()
+    return JSONResponse({"running": s.running, "done": s.done, "total": s.total})
