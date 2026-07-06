@@ -1,3 +1,18 @@
+{% macro progress_bar(dom_id, label) %}
+<div id="{{ dom_id }}" class="w-full max-w-md">
+  <div class="flex items-center justify-between gap-3 text-xs mb-1">
+    <span data-role="phase" class="text-indigo-700 font-medium inline-flex items-center gap-1.5">
+      <svg class="animate-spin h-3 w-3 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"></path></svg>
+      {{ label }}
+    </span>
+    <span data-role="eta" class="text-slate-400 shrink-0"></span>
+  </div>
+  <div class="h-2 bg-slate-200 rounded-full overflow-hidden">
+    <div data-role="fill" class="h-2 bg-indigo-500 rounded-full transition-all duration-700 ease-out" style="width: 4%"></div>
+  </div>
+</div>
+{% endmacro %}
+
 {% macro verdict_badge(verdict) %}
   {% set styles = {
     'relevant': 'bg-emerald-100 text-emerald-800',

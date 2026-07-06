@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,7 +34,7 @@ class EconomicsPreconditionError(Exception):
 class _TenderContext:
     card_context: str
     brief: dict[str, Any]
-    nmck: float
+    nmck: float | None  # None -> режим предложения цены (закрытый тендер без НМЦК)
     doc_id: int
     doc_bytes: bytes | None
     doc_filename: str
@@ -46,10 +47,6 @@ def _load_context(reestr_number: str, *, deep: bool) -> _TenderContext:
         if found is None:
             raise EconomicsPreconditionError("Тендер не найден")
         tender, relevance = found
-        if tender.nmck is None:
-            raise EconomicsPreconditionError(
-                "У тендера нет НМЦК — без цены расчёт долей невозможен"
-            )
         docs = DocumentRepository(session)
         analyses = docs.latest_analyses_for(reestr_number)
         if not analyses:
@@ -61,7 +58,7 @@ def _load_context(reestr_number: str, *, deep: bool) -> _TenderContext:
         return _TenderContext(
             card_context=build_context(tender, relevance),
             brief=dict(analysis.brief),
-            nmck=float(tender.nmck),
+            nmck=float(tender.nmck) if tender.nmck is not None else None,
             doc_id=analysis.document_id,
             doc_bytes=bytes(doc.data) if deep and doc is not None else None,
             doc_filename=doc.filename if doc is not None else "",
@@ -84,13 +81,28 @@ def _deep_text(ctx: _TenderContext) -> tuple[str | None, str | None]:
     return extracted.text, None
 
 
-def calculate_economics(reestr_number: str, *, deep: bool = False) -> dict[str, Any]:
-    """Полный цикл расчёта: возвращает payload и сохраняет его в tender_economics."""
+def calculate_economics(
+    reestr_number: str,
+    *,
+    deep: bool = False,
+    on_phase: Callable[[str, float], None] | None = None,
+) -> dict[str, Any]:
+    """Полный цикл расчёта: возвращает payload и сохраняет его в tender_economics.
+
+    on_phase(текст, доля 0..1) — вехи для прогресс-бара в UI.
+    """
+
+    def phase(text: str, fraction: float) -> None:
+        if on_phase is not None:
+            on_phase(text, fraction)
+
+    phase("готовлю данные тендера", 0.03)
     ctx = _load_context(reestr_number, deep=deep)
 
     with get_session_factory()() as session:
         store = EconomicsStore(session)
         all_projects = store.analog_projects()
+        bureau_margin = store.bureau_margin_median_pct()
     if not all_projects:
         raise EconomicsPreconditionError(
             "База «Экономики» пуста — импортируйте файл: tender economics-import --file …"
@@ -99,6 +111,7 @@ def calculate_economics(reestr_number: str, *, deep: bool = False) -> dict[str, 
     deep_text, deep_warning = _deep_text(ctx)
     ranges = overhead_history_ranges(all_projects)
     proposer = create_economics_proposer()
+    phase("ИИ подбирает аналоги и сопоставляет разделы", 0.12)
     proposal = proposer.propose(
         card_context=ctx.card_context,
         brief=ctx.brief,
@@ -115,6 +128,8 @@ def calculate_economics(reestr_number: str, *, deep: bool = False) -> dict[str, 
             "ИИ не нашёл ни одного проекта-аналога в базе — расчёт по медианам невозможен"
         )
 
+    phase("считаю таблицу по медианам аналогов", 0.55)
+    params = Params() if bureau_margin is None else Params(target_margin_pct=bureau_margin)
     payload = build_payload(
         base=proposal.base,
         sections=proposal.sections,
@@ -122,7 +137,7 @@ def calculate_economics(reestr_number: str, *, deep: bool = False) -> dict[str, 
         analogs=analogs,
         all_projects=all_projects,
         analog_reasons=proposal.analog_reasons,
-        params=Params(),
+        params=params,
         comments=proposal.comments,
         object_kind=proposal.object_kind,
         design_stage=proposal.design_stage,
@@ -135,6 +150,7 @@ def calculate_economics(reestr_number: str, *, deep: bool = False) -> dict[str, 
 
     # ИИ-ревью готового расчёта (открытые источники, веб-поиск). Не фатально:
     # упало — расчёт сохраняем без ревью, с предупреждением.
+    phase("ИИ-ревью по открытым источникам (веб-поиск)", 0.60)
     try:
         reviewer = create_economics_reviewer()
         payload["review"] = reviewer.review(
@@ -149,6 +165,7 @@ def calculate_economics(reestr_number: str, *, deep: bool = False) -> dict[str, 
         payload["warnings_static"] = [*payload.get("warnings_static", []), note]
         payload["warnings"] = [*payload.get("warnings", []), note]
 
+    phase("сохраняю расчёт", 0.96)
     with get_session_factory()() as session:
         EconomicsStore(session).add_calculation(
             reestr_number, created_by="ai", model=proposer.model, payload=payload

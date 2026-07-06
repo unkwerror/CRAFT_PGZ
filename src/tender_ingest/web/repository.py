@@ -65,6 +65,7 @@ def _flag(s: str | None) -> bool:
 @dataclass
 class TenderRow:
     reestr_number: str
+    source: str
     subject: str | None
     nmck: Decimal | None
     currency: str | None
@@ -94,6 +95,7 @@ class Filters:
     nmck_max: Decimal | None = None
     upload: int | None = None  # id выгрузки (ingestion_runs.id) — переключение выгрузок
     fav: bool = False  # только избранные
+    closed: bool = False  # только закрытые тендеры (source='closed')
     sort: str = "score"
     page: int = 1
 
@@ -111,6 +113,7 @@ class Filters:
         nmck_max: str | None = None,
         upload: str | None = None,
         fav: str | None = None,
+        closed: str | None = None,
         sort: str | None = None,
         page: str | None = None,
     ) -> Filters:
@@ -126,6 +129,7 @@ class Filters:
             nmck_max=_to_decimal(nmck_max),
             upload=_to_int(upload),
             fav=_flag(fav),
+            closed=_flag(closed),
             sort=sort if sort in _SORTS else "score",
             page=max(1, _to_int(page) or 1),
         )
@@ -182,6 +186,8 @@ class WebRepository:
             )
         if f.fav:
             stmt = stmt.where(Tender.reestr_number.in_(select(TenderFavorite.reestr_number)))
+        if f.closed:
+            stmt = stmt.where(Tender.source == "closed")
         return stmt
 
     def _joined(self, *entities: Any) -> Select[Any]:
@@ -240,6 +246,7 @@ class WebRepository:
             rows.append(
                 TenderRow(
                     reestr_number=tender.reestr_number,
+                    source=tender.source,
                     subject=tender.subject,
                     nmck=tender.nmck,
                     currency=tender.currency,

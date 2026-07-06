@@ -27,20 +27,27 @@ def build_economics_xlsx(payload: dict[str, Any], *, title: str, reestr: str) ->
 
     base = payload["base"]
     totals = payload["totals"]
+    offer_mode = base.get("nmck") is None
 
     ws.append([f"{title} (№ {reestr})"])
     ws["A1"].font = _BOLD
-    note = ""
-    if base.get("mode") == "pd_share" and base.get("pd_share_pct"):
-        note = f"(на ПД ~{base['pd_share_pct']:.0f}% цены)"
-    ws.append([1, "Всего согласно договора", note, base["nmck"]])
+    if offer_mode:
+        note = "ПРЕДЛОЖЕНИЕ (НМЦК не была указана)"
+        ws.append([1, "Цена предложения (себестоимость + маржа)", note, totals.get("price")])
+    else:
+        note = ""
+        if base.get("mode") == "pd_share" and base.get("pd_share_pct"):
+            note = f"(на ПД ~{base['pd_share_pct']:.0f}% цены)"
+        ws.append([1, "Всего согласно договора", note, base["nmck"]])
     row_scenarios_start = ws.max_row
-    ws.cell(row=row_scenarios_start, column=8, value="% понижения").font = _BOLD
+    grid_label = "маржа" if offer_mode else "% понижения"
+    ws.cell(row=row_scenarios_start, column=8, value=grid_label).font = _BOLD
     ws.cell(row=row_scenarios_start, column=9, value="стоимость").font = _BOLD
     ws.cell(row=row_scenarios_start, column=10, value="прибыль").font = _BOLD
     for i, sc in enumerate(payload.get("scenarios", []), start=1):
         row = row_scenarios_start + i
-        ws.cell(row=row, column=8, value=sc["reduction_pct"] / 100)
+        pct = sc["margin_pct"] if offer_mode else sc["reduction_pct"]
+        ws.cell(row=row, column=8, value=pct / 100)
         ws.cell(row=row, column=9, value=sc["price"])
         ws.cell(row=row, column=10, value=sc["profit"])
 
@@ -73,7 +80,9 @@ def build_economics_xlsx(payload: dict[str, Any], *, title: str, reestr: str) ->
     ws.append([None, "ИТОГО", None, totals["cost"]])
     ws.cell(row=ws.max_row, column=2).font = _BOLD
     ws.cell(row=ws.max_row, column=4).font = _BOLD
-    ws.append([None, "Прибыль (при НМЦК)", None, totals["profit_at_nmck"]])
+    profit = totals.get("profit_at_nmck", totals.get("profit_at_offer"))
+    profit_label = "Прибыль (при предложенной цене)" if offer_mode else "Прибыль (при НМЦК)"
+    ws.append([None, profit_label, None, profit])
     ws.cell(row=ws.max_row, column=2).font = _BOLD
 
     min_price = payload.get("min_price", {})
@@ -86,14 +95,15 @@ def build_economics_xlsx(payload: dict[str, Any], *, title: str, reestr: str) ->
             min_price.get("price"),
         ]
     )
-    ws.append(
-        [
-            None,
-            "Допустимое снижение от НМЦК",
-            None,
-            f"{min_price.get('max_reduction_pct', 0)}%",
-        ]
-    )
+    if min_price.get("max_reduction_pct") is not None:
+        ws.append(
+            [
+                None,
+                "Допустимое снижение от НМЦК",
+                None,
+                f"{min_price.get('max_reduction_pct', 0)}%",
+            ]
+        )
 
     for warning in payload.get("warnings", []):
         ws.append([None, warning])

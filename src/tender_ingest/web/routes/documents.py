@@ -14,6 +14,7 @@ from tender_ingest.db.session import get_session_factory
 from tender_ingest.documents.prompt import FIELD_LABELS
 from tender_ingest.documents.report import build_analysis_pdf
 from tender_ingest.web.doc_analysis_job import job as doc_job
+from tender_ingest.web.progress import time_progress
 from tender_ingest.web.repository import DocumentRepository, WebRepository
 from tender_ingest.web.security import require_auth
 
@@ -85,9 +86,13 @@ def analyze_document(request: Request, reestr_number: str, doc_id: int) -> Redir
 
 @router.get("/tender/{reestr_number}/documents/{doc_id}/analysis-status")
 def analysis_status(request: Request, reestr_number: str, doc_id: int) -> JSONResponse:
-    """Идёт ли разбор ИМЕННО этого документа (для поллинга со страницы карточки)."""
+    """Прогресс разбора ИМЕННО этого документа (для прогресс-бара на карточке)."""
     s = doc_job.snapshot()
-    return JSONResponse({"running": s.running and s.doc_id == doc_id})
+    running = s.running and s.doc_id == doc_id
+    if not running:
+        return JSONResponse({"running": False})
+    progress, eta = time_progress(s.started_at, s.estimate_sec)
+    return JSONResponse({"running": True, "progress": progress, "eta": eta, "phase": s.phase})
 
 
 @router.get("/tender/{reestr_number}/documents/{doc_id}/analysis.pdf")

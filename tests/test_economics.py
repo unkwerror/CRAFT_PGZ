@@ -9,6 +9,7 @@ from tender_ingest.economics.canon import CATALOG_BY_KEY, match_canon
 from tender_ingest.economics.engine import (
     BaseInput,
     OverheadInput,
+    Params,
     SectionInput,
     apply_edits,
     build_payload,
@@ -95,7 +96,9 @@ def test_parse_number_never_int() -> None:
 # --- движок ---
 
 
-def _analog(pid: int, sections: dict[str, float]) -> AnalogProject:
+def _analog(
+    pid: int, sections: dict[str, float], amounts: dict[str, float] | None = None
+) -> AnalogProject:
     return AnalogProject(
         id=pid,
         sheet="work",
@@ -103,6 +106,7 @@ def _analog(pid: int, sections: dict[str, float]) -> AnalogProject:
         contract_total=1_000_000.0,
         sections=sections,
         section_names={},
+        amounts=amounts or {},
     )
 
 
@@ -214,6 +218,74 @@ def test_overhead_history_ranges_fallback() -> None:
     assert ranges["gip"] == (2.0, 15.0)
     lo, hi = ranges["reserve"]
     assert lo < hi
+
+
+# --- режим предложения цены (НМЦК нет) ---
+
+
+def _offer_inputs() -> tuple[
+    BaseInput, list[SectionInput], list[OverheadInput], list[AnalogProject]
+]:
+    base = BaseInput(nmck=None, mode="offer")
+    sections = [
+        SectionInput(name="ПЗУ", canon="pzu"),
+        SectionInput(name="АР", canon="ar"),
+    ]
+    overheads = [
+        OverheadInput(canon="gip", pct=5.0),
+        OverheadInput(canon="reserve", pct=5.0),
+    ]
+    analogs = [
+        _analog(1, {}, {"pzu": 100_000.0, "ar": 200_000.0}),
+        _analog(2, {}, {"pzu": 140_000.0, "ar": 260_000.0}),
+        _analog(3, {}, {"pzu": 120_000.0}),
+    ]
+    return base, sections, overheads, analogs
+
+
+def test_offer_mode_price_from_cost_and_margin() -> None:
+    base, sections, overheads, analogs = _offer_inputs()
+    payload = build_payload(
+        base=base,
+        sections=sections,
+        overheads=overheads,
+        analogs=analogs,
+        all_projects=analogs,
+        params=Params(target_margin_pct=40.0),
+    )
+    # суммы разделов — медианы абсолютных затрат аналогов
+    assert payload["lines"][0]["amount"] == 120_000.0  # медиана 100/140/120
+    assert payload["lines"][1]["amount"] == 230_000.0  # медиана 200/260
+    cost_sections = 350_000.0
+    # цена = себестоимость разделов / (1 − накладные 10% − маржа 40%)
+    price = cost_sections / 0.5
+    assert payload["totals"]["price"] == round(price, 2)
+    assert payload["totals"]["mode"] == "offer"
+    # накладные — процент от цены
+    gip = next(o for o in payload["overheads"] if o["canon"] == "gip")
+    assert gip["amount"] == round(0.05 * price, 2)
+    # прибыль = маржа × цена
+    assert abs(payload["totals"]["profit_at_offer"] - 0.4 * price) < 1
+    # сетка по маржам и предупреждение о режиме
+    assert all("margin_pct" in sc for sc in payload["scenarios"])
+    assert any("НМЦК в тендере не указана" in w for w in payload["warnings"])
+
+
+def test_offer_mode_apply_edits_and_target_margin() -> None:
+    base, sections, overheads, analogs = _offer_inputs()
+    payload = build_payload(
+        base=base,
+        sections=sections,
+        overheads=overheads,
+        analogs=analogs,
+        all_projects=analogs,
+        params=Params(target_margin_pct=40.0),
+    )
+    edited = apply_edits(payload, {"l0": {"amount": 200_000.0}}, target_margin_pct=30.0)
+    assert edited["lines"][0]["amount"] == 200_000.0
+    cost_sections = 200_000.0 + 230_000.0
+    assert edited["totals"]["price"] == round(cost_sections / 0.6, 2)  # 10% накладные + 30% маржа
+    assert edited["params"]["target_margin_pct"] == 30.0
 
 
 # --- СБЦП (второй источник долей) ---

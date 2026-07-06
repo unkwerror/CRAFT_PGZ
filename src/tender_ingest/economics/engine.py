@@ -2,10 +2,16 @@
 
 Принцип: ИИ (proposer) решает ТОЛЬКО семантические вопросы — какие разделы требует ТЗ,
 какие исторические проекты похожи, какие накладные уместны для типа объекта. Все числа
-считаются здесь: доля раздела = медиана долей по проектам-аналогам, суммы = доля × цена,
-накладные клампятся в исторический диапазон (10–90 перцентиль), итог/прибыль/сетка
-понижения/минимальная цена — чистая арифметика. Раздел без данных по аналогам честно
-помечается no_data и в сумму не входит (никаких выдуманных цифр).
+считаются здесь. Раздел без данных по аналогам сначала пробует нормативный вес СБЦП
+(только здания), иначе честно помечается no_data и в сумму не входит.
+
+Два режима базы:
+- НМЦК известна: доля раздела = медиана долей по аналогам, сумма = доля × НМЦК,
+  сетка понижения цены, минимально допустимая цена.
+- НМЦК НЕТ (закрытый тендер без цены): формируем ПРЕДЛОЖЕНИЕ компании от себестоимости:
+  сумма раздела = медиана АБСОЛЮТНЫХ затрат по аналогам (₽), накладные — процент от
+  итоговой цены, цена = себестоимость_разделов / (1 − накладные% − маржа%). Маржа по
+  умолчанию — медиана прибыли бюро по базе «Экономики», сетка вариантов по маржам.
 
 payload — единый JSON-словарь расчёта, он же хранится в tender_economics.payload
 и пересчитывается при правках человека (apply_edits).
@@ -25,7 +31,9 @@ from tender_ingest.economics.store import AnalogProject
 OVERHEAD_KEYS: tuple[str, ...] = ("gip", "project_manager", "freelance_check", "reserve")
 
 DEFAULT_REDUCTIONS: tuple[float, ...] = (5.0, 7.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0)
+DEFAULT_OFFER_MARGINS: tuple[float, ...] = (20.0, 30.0, 40.0, 50.0)
 DEFAULT_MIN_MARGIN_PCT = 20.0
+DEFAULT_TARGET_MARGIN_PCT = 35.0  # если медиану маржи бюро посчитать не удалось
 
 # Кламп клампа: если истории по накладной нет, страхуемся широким разумным диапазоном.
 _FALLBACK_OVERHEAD_RANGE: dict[str, tuple[float, float]] = {
@@ -34,6 +42,10 @@ _FALLBACK_OVERHEAD_RANGE: dict[str, tuple[float, float]] = {
     "freelance_check": (2.5, 7.0),
     "reserve": (3.0, 17.0),
 }
+
+# Знаменатель формулы цены предложения не даём упасть ниже этого значения:
+# накладные + маржа не могут съесть больше 90% цены.
+_MIN_OFFER_DENOMINATOR = 0.1
 
 
 @dataclass(frozen=True)
@@ -57,10 +69,10 @@ class OverheadInput:
 
 @dataclass(frozen=True)
 class BaseInput:
-    """База расчёта: НМЦК и решение ИИ о структуре контракта (полная цена / доля на ПД)."""
+    """База расчёта: НМЦК (или её отсутствие -> режим предложения цены) и структура."""
 
-    nmck: float
-    mode: str = "full"  # full | pd_share
+    nmck: float | None
+    mode: str = "full"  # full | pd_share | offer (без НМЦК)
     pd_share_pct: float | None = None
     rationale: str = ""
     quote: str = ""
@@ -69,12 +81,14 @@ class BaseInput:
 @dataclass(frozen=True)
 class Params:
     min_margin_pct: float = DEFAULT_MIN_MARGIN_PCT
+    target_margin_pct: float = DEFAULT_TARGET_MARGIN_PCT  # для режима предложения
     reductions: tuple[float, ...] = DEFAULT_REDUCTIONS
+    offer_margins: tuple[float, ...] = DEFAULT_OFFER_MARGINS
 
 
 @dataclass
 class _Stats:
-    shares: list[float] = field(default_factory=list)
+    values: list[float] = field(default_factory=list)  # доли (0..1) или суммы (₽)
     titles: list[str] = field(default_factory=list)
 
 
@@ -93,13 +107,20 @@ def _percentile(values: list[float], q: float) -> float:
     return data[lo] + (data[hi] - data[lo]) * (pos - lo)
 
 
-def _section_stats(canon: str, analogs: list[AnalogProject]) -> _Stats:
+def _section_stats(canon: str, analogs: list[AnalogProject], *, absolute: bool) -> _Stats:
+    """Статистика раздела по аналогам: доли от цены (absolute=False) или суммы в ₽."""
     stats = _Stats()
     for project in analogs:
-        share = project.sections.get(canon)
-        if share is not None and 0 < share < 0.9:
-            stats.shares.append(share)
-            stats.titles.append(project.title)
+        if absolute:
+            value = project.amounts.get(canon)
+            if value is not None and value > 0:
+                stats.values.append(value)
+                stats.titles.append(project.title)
+        else:
+            share = project.sections.get(canon)
+            if share is not None and 0 < share < 0.9:
+                stats.values.append(share)
+                stats.titles.append(project.title)
     return stats
 
 
@@ -122,18 +143,17 @@ def _clamp(value: float, bounds: tuple[float, float]) -> float:
 def _apply_sbcp_fallback(
     lines: list[dict[str, Any]],
     *,
-    nmck: float,
+    nmck: float | None,
     object_kind: str,
     design_stage: str,
     warnings: list[str],
 ) -> None:
-    """Второй источник долей: нормативные веса СБЦП для разделов без аналогов.
+    """Второй источник: нормативные веса СБЦП для разделов без аналогов (только здания).
 
-    Веса СБЦП относительные, поэтому приводятся к уровню затрат бюро коэффициентом
-    k = медиана(доля_по_аналогам / вес_СБЦП) по разделам-«якорям» этого же расчёта
-    (есть и аналог, и нормативный вес). Якорей меньше двух — фолбэк не применяется,
-    разделы честно остаются no_data (никакой подгонки).
-    Справочник покрывает здания (ЖГС) — только object_kind='building'.
+    Веса СБЦП относительные — приводятся к уровню затрат бюро коэффициентом
+    k = медиана(значение_по_аналогам / вес_СБЦП) по разделам-«якорям» этого же расчёта.
+    С НМЦК якорь — доля от цены; без НМЦК — абсолютная сумма (пропорция сумм).
+    Якорей меньше двух — фолбэк честно отключается (никакой подгонки).
     """
     if object_kind != "building":
         return
@@ -143,10 +163,20 @@ def _apply_sbcp_fallback(
     ]
     if not targets:
         return
+
+    def anchor_value(line: dict[str, Any]) -> float | None:
+        if nmck is not None:
+            share = line.get("share_pct")
+            return float(share) / 100.0 if share is not None else None
+        amount = line.get("amount")
+        return float(amount) if amount is not None else None
+
     anchors = [
-        (line["share_pct"] / 100.0, weights[canon])
+        (value, weights[canon])
         for line in lines
-        if line["source"] == "analog" and (canon := line.get("canon")) in weights
+        if line["source"] == "analog"
+        and (canon := line.get("canon")) in weights
+        and (value := anchor_value(line)) is not None
     ]
     if len(anchors) < 2:
         warnings.append(
@@ -154,22 +184,25 @@ def _apply_sbcp_fallback(
             "и аналоги бюро, и нормативный вес) — разделы без данных оценивайте вручную."
         )
         return
-    k = statistics.median(share / weight for share, weight in anchors)
+    k = statistics.median(value / weight for value, weight in anchors)
     for line in targets:
-        share = weights[str(line["canon"])] * k
+        scaled = weights[str(line["canon"])] * k
         extra = f" · {line['note']}" if line.get("note") else ""
-        line.update(
-            {
-                "share_pct": round(share * 100, 2),
-                "amount": _round2(share * nmck),
-                "source": "sbcp",
-                "n_analogs": 0,
-                "note": (
-                    f"вес по СБЦП (стадия {stage_label(design_stage)}), приведён к уровню "
-                    f"затрат бюро (k по {len(anchors)} разделам-якорям). {SBCP_SOURCE}{extra}"
-                ),
-            }
+        note = (
+            f"вес по СБЦП (стадия {stage_label(design_stage)}), приведён к уровню "
+            f"затрат бюро (k по {len(anchors)} разделам-якорям). {SBCP_SOURCE}{extra}"
         )
+        if nmck is not None:
+            line.update(
+                {
+                    "share_pct": round(scaled * 100, 2),
+                    "amount": _round2(scaled * nmck),
+                    "source": "sbcp",
+                    "note": note,
+                }
+            )
+        else:
+            line.update({"amount": _round2(scaled), "source": "sbcp", "note": note})
 
 
 def build_payload(
@@ -187,6 +220,7 @@ def build_payload(
 ) -> dict[str, Any]:
     """Собрать расчёт: строки по разделам ТЗ (медианы аналогов, фолбэк СБЦП) + накладные."""
     p = params or Params()
+    offer_mode = base.nmck is None
     ranges = overhead_history_ranges(all_projects)
     reasons = analog_reasons or {}
 
@@ -211,22 +245,29 @@ def build_payload(
             "analog_titles": [],
         }
         if canon is not None:
-            stats = _section_stats(canon, analogs)
-            if stats.shares:
-                share = statistics.median(stats.shares)
+            stats = _section_stats(canon, analogs, absolute=offer_mode)
+            if stats.values:
+                median = statistics.median(stats.values)
                 entry.update(
                     {
-                        "share_pct": round(share * 100, 2),
-                        "amount": _round2(share * base.nmck),
                         "source": "analog",
-                        "n_analogs": len(stats.shares),
-                        "range_pct": [
-                            round(min(stats.shares) * 100, 2),
-                            round(max(stats.shares) * 100, 2),
-                        ],
+                        "n_analogs": len(stats.values),
                         "analog_titles": stats.titles[:5],
                     }
                 )
+                if offer_mode:
+                    entry["amount"] = _round2(median)
+                    entry["range_amount"] = [
+                        _round2(min(stats.values)),
+                        _round2(max(stats.values)),
+                    ]
+                else:
+                    entry["share_pct"] = round(median * 100, 2)
+                    entry["amount"] = _round2(median * float(base.nmck or 0))
+                    entry["range_pct"] = [
+                        round(min(stats.values) * 100, 2),
+                        round(max(stats.values) * 100, 2),
+                    ]
                 if canon in OVERHEAD_KEYS:
                     covered_overheads.add(canon)
         lines.append(entry)
@@ -259,7 +300,7 @@ def build_payload(
                 "quote": "",
                 "note": overhead.rationale,
                 "share_pct": round(pct, 2),
-                "amount": _round2(pct / 100 * base.nmck),
+                "amount": _round2(pct / 100 * base.nmck) if base.nmck is not None else None,
                 "source": "ai",
                 "n_analogs": 0,
                 "range_pct": [round(bounds[0], 2), round(bounds[1], 2)],
@@ -269,15 +310,20 @@ def build_payload(
 
     payload: dict[str, Any] = {
         "base": {
-            "nmck": _round2(base.nmck),
-            "mode": base.mode,
+            "nmck": _round2(base.nmck) if base.nmck is not None else None,
+            "mode": "offer" if offer_mode else base.mode,
             "pd_share_pct": base.pd_share_pct,
             "rationale": base.rationale,
             "quote": base.quote,
             "object_kind": object_kind,
             "design_stage": design_stage,
         },
-        "params": {"min_margin_pct": p.min_margin_pct, "reductions": list(p.reductions)},
+        "params": {
+            "min_margin_pct": p.min_margin_pct,
+            "target_margin_pct": p.target_margin_pct,
+            "reductions": list(p.reductions),
+            "offer_margins": list(p.offer_margins),
+        },
         "lines": lines,
         "overheads": overhead_lines,
         "analogs": [
@@ -301,18 +347,26 @@ def apply_edits(
     payload: dict[str, Any],
     line_edits: dict[str, dict[str, float | None]],
     min_margin_pct: float | None = None,
+    target_margin_pct: float | None = None,
 ) -> dict[str, Any]:
     """Правки человека: {'l0': {'amount': …} | {'share_pct': …}, 'o1': …} -> новый payload.
 
     Ключ — префикс l (lines) / o (overheads) + индекс. Задан amount — доля выводится из
-    него; задана share_pct — сумма из доли. Правленая строка помечается source='user'.
+    него; задана share_pct — сумма из доли (в режиме предложения — от текущей цены).
+    Правленая строка помечается source='user'.
     """
     result: dict[str, Any] = dict(payload)
     result["lines"] = [dict(line) for line in payload.get("lines", [])]
     result["overheads"] = [dict(line) for line in payload.get("overheads", [])]
     result["params"] = dict(payload.get("params", {}))
-    base_data = result.get("base")
-    nmck = float(base_data["nmck"]) if isinstance(base_data, dict) else 0.0
+    base_data = result.get("base", {})
+    offer_mode = base_data.get("mode") == "offer" or base_data.get("nmck") is None
+    # опорная цена для пересчёта долей <-> сумм: НМЦК либо текущая цена предложения
+    if base_data.get("nmck") is not None:
+        ref_price = float(base_data["nmck"])
+    else:
+        totals = payload.get("totals", {})
+        ref_price = float(totals.get("price") or 0.0)
 
     for key, edit in line_edits.items():
         bucket = result["lines"] if key.startswith("l") else result["overheads"]
@@ -323,39 +377,68 @@ def apply_edits(
             continue
         amount = edit.get("amount")
         share_pct = edit.get("share_pct")
-        if amount is not None:
+        is_overhead = key.startswith("o")
+        if amount is not None and not (offer_mode and is_overhead):
             line["amount"] = _round2(amount)
-            line["share_pct"] = round(amount / nmck * 100, 2) if nmck else None
-        elif share_pct is not None:
+            line["share_pct"] = round(amount / ref_price * 100, 2) if ref_price else None
+        elif share_pct is not None or (amount is not None and offer_mode and is_overhead):
+            # накладные в режиме предложения задаются процентом (сумма зависит от цены)
+            if share_pct is None and amount is not None and ref_price:
+                share_pct = amount / ref_price * 100
+            if share_pct is None:
+                continue
             line["share_pct"] = round(share_pct, 2)
-            line["amount"] = _round2(share_pct / 100 * nmck)
+            if not (offer_mode and is_overhead):
+                line["amount"] = _round2(share_pct / 100 * ref_price) if ref_price else None
         else:
             continue
         line["source"] = "user"
 
     if min_margin_pct is not None:
         result["params"]["min_margin_pct"] = min_margin_pct
+    if target_margin_pct is not None:
+        result["params"]["target_margin_pct"] = target_margin_pct
     _recompute_totals(result)
     return result
 
 
 def _recompute_totals(payload: dict[str, Any]) -> None:
-    """Итоги, сетка понижения и минимальная цена — из строк payload (in-place)."""
+    """Итоги, сетки и предупреждения — из строк payload (in-place). Оба режима."""
     base = payload["base"]
-    nmck = float(base["nmck"])
+    warnings: list[str] = []
+    no_data = [line["name"] for line in payload["lines"] if line.get("amount") is None]
+
+    if base.get("mode") == "offer" or base.get("nmck") is None:
+        _recompute_offer(payload, warnings)
+    else:
+        _recompute_with_nmck(payload, warnings)
+
+    if no_data:
+        warnings.append(
+            "Разделы без данных по аналогам (в сумме НЕ учтены, нужна ручная оценка): "
+            + "; ".join(no_data)
+        )
+    payload["no_data"] = no_data
+    payload["warnings"] = warnings + list(payload.get("warnings_static", []))
+
+
+def _recompute_with_nmck(payload: dict[str, Any], warnings: list[str]) -> None:
+    """Классический режим: доли от НМЦК, сетка понижения, минимальная цена."""
+    nmck = float(payload["base"]["nmck"])
+    params = payload["params"]
     all_lines = list(payload["lines"]) + list(payload["overheads"])
     cost = sum(float(line["amount"]) for line in all_lines if line.get("amount") is not None)
-    no_data = [line["name"] for line in payload["lines"] if line.get("amount") is None]
 
     profit = nmck - cost
     payload["totals"] = {
+        "mode": "nmck",
         "cost": _round2(cost),
+        "price": _round2(nmck),
         "profit_at_nmck": _round2(profit),
         "margin_pct": round(profit / nmck * 100, 1) if nmck else None,
     }
-    payload["no_data"] = no_data
 
-    reductions = [float(r) for r in payload["params"].get("reductions", DEFAULT_REDUCTIONS)]
+    reductions = [float(r) for r in params.get("reductions", DEFAULT_REDUCTIONS)]
     payload["scenarios"] = [
         {
             "reduction_pct": r,
@@ -366,7 +449,7 @@ def _recompute_totals(payload: dict[str, Any]) -> None:
         for r in reductions
     ]
 
-    min_margin = float(payload["params"].get("min_margin_pct", DEFAULT_MIN_MARGIN_PCT))
+    min_margin = float(params.get("min_margin_pct", DEFAULT_MIN_MARGIN_PCT))
     min_price = cost * (1 + min_margin / 100)
     max_reduction = (nmck - min_price) / nmck * 100 if nmck else 0.0
     payload["min_price"] = {
@@ -375,20 +458,85 @@ def _recompute_totals(payload: dict[str, Any]) -> None:
         "max_reduction_pct": round(max_reduction, 1),
     }
 
-    warnings: list[str] = []
     if nmck and cost > nmck:
-        warnings.append(
+        warnings.insert(
+            0,
             "⚠ Себестоимость ВЫШЕ НМЦК: участие убыточно при текущей цене "
-            f"(себестоимость {cost:,.0f} ₽ против НМЦК {nmck:,.0f} ₽).".replace(",", " ")
+            f"(себестоимость {cost:,.0f} ₽ против НМЦК {nmck:,.0f} ₽).".replace(",", " "),
         )
     elif nmck and min_price > nmck:
-        warnings.append(
+        warnings.insert(
+            0,
             "⚠ Даже без снижения цены маржа ниже целевой "
-            f"({payload['totals']['margin_pct']}% при целевых {min_margin:.0f}%)."
+            f"({payload['totals']['margin_pct']}% при целевых {min_margin:.0f}%).",
         )
-    if no_data:
-        warnings.append(
-            "Разделы без данных по аналогам (в сумме НЕ учтены, нужна ручная оценка): "
-            + "; ".join(no_data)
+
+
+def _offer_price(cost_sections: float, overhead_pct: float, margin_pct: float) -> float:
+    """Цена предложения: себестоимость разделов / (1 − накладные% − маржа%)."""
+    denominator = max(1 - (overhead_pct + margin_pct) / 100, _MIN_OFFER_DENOMINATOR)
+    return cost_sections / denominator
+
+
+def _recompute_offer(payload: dict[str, Any], warnings: list[str]) -> None:
+    """Режим предложения (НМЦК нет): цена формируется от себестоимости и маржи."""
+    params = payload["params"]
+    target_margin = float(params.get("target_margin_pct", DEFAULT_TARGET_MARGIN_PCT))
+    min_margin = float(params.get("min_margin_pct", DEFAULT_MIN_MARGIN_PCT))
+
+    cost_sections = sum(
+        float(line["amount"]) for line in payload["lines"] if line.get("amount") is not None
+    )
+    overhead_pct = sum(
+        float(line["share_pct"])
+        for line in payload["overheads"]
+        if line.get("share_pct") is not None
+    )
+    denominator_floor_hit = 1 - (overhead_pct + target_margin) / 100 < _MIN_OFFER_DENOMINATOR
+    price = _offer_price(cost_sections, overhead_pct, target_margin)
+
+    for line in payload["overheads"]:
+        pct = line.get("share_pct")
+        line["amount"] = _round2(float(pct) / 100 * price) if pct is not None else None
+    for line in payload["lines"]:
+        amount = line.get("amount")
+        line["share_pct"] = round(float(amount) / price * 100, 2) if amount and price else None
+
+    cost_total = cost_sections + sum(
+        float(line["amount"]) for line in payload["overheads"] if line.get("amount") is not None
+    )
+    payload["totals"] = {
+        "mode": "offer",
+        "cost": _round2(cost_total),
+        "price": _round2(price),
+        "profit_at_offer": _round2(price - cost_total),
+        "margin_pct": round(target_margin, 1),
+    }
+
+    margins = [float(m) for m in params.get("offer_margins", DEFAULT_OFFER_MARGINS)]
+    payload["scenarios"] = [
+        {
+            "margin_pct": m,
+            "price": _round2(_offer_price(cost_sections, overhead_pct, m)),
+            "profit": _round2(_offer_price(cost_sections, overhead_pct, m) * m / 100),
+        }
+        for m in margins
+    ]
+    payload["min_price"] = {
+        "price": _round2(_offer_price(cost_sections, overhead_pct, min_margin)),
+        "min_margin_pct": min_margin,
+        "max_reduction_pct": None,
+    }
+
+    warnings.insert(
+        0,
+        "НМЦК в тендере не указана — цена сформирована ОТ СЕБЕСТОИМОСТИ: суммы разделов "
+        "— медианы затрат по проектам-аналогам (₽), накладные — % от цены, маржа "
+        f"{target_margin:.0f}% (медиана прибыли бюро; правится ниже).",
+    )
+    if denominator_floor_hit:
+        warnings.insert(
+            0,
+            "⚠ Накладные + маржа съедают почти всю цену — формула ограничена, "
+            "проверьте проценты накладных и целевую маржу.",
         )
-    payload["warnings"] = warnings + list(payload.get("warnings_static", []))

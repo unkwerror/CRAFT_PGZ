@@ -63,37 +63,61 @@ assessment='verify' (проверить вручную).
 }"""
 
 
+def _money(value: object) -> str:
+    if value is None:
+        return "—"
+    return f"{float(str(value)):,.0f} ₽".replace(",", " ")
+
+
 def _payload_digest(payload: dict[str, Any]) -> str:
-    """Компактное текстовое представление расчёта для ревью."""
+    """Компактное текстовое представление расчёта для ревью (оба режима базы)."""
     base = payload["base"]
     totals = payload["totals"]
+    offer_mode = base.get("nmck") is None
     lines = []
     for prefix, bucket in (("l", payload["lines"]), ("o", payload["overheads"])):
         for i, line in enumerate(bucket):
-            amount = "НЕТ ДАННЫХ"
-            if line.get("amount"):
-                amount = f"{line['amount']:,.0f} ₽".replace(",", " ")
+            amount = _money(line.get("amount")) if line.get("amount") else "НЕТ ДАННЫХ"
             share = f"{line['share_pct']}%" if line.get("share_pct") is not None else "—"
             lines.append(
                 f"[{prefix}{i}] {line['name']} | доля {share} | {amount} | "
                 f"источник: {line.get('source')} | {line.get('note') or ''}"
             )
-    scenarios = "; ".join(
-        f"-{s['reduction_pct']}% -> прибыль {s['profit']:,.0f} ₽".replace(",", " ")
-        for s in payload.get("scenarios", [])
-    )
+    if offer_mode:
+        head = (
+            "НМЦК НЕ УКАЗАНА — цена сформирована от себестоимости "
+            f"(предложение компании: {_money(totals.get('price'))}, "
+            f"маржа {totals.get('margin_pct')}%). Особо проверь реальность сумм по рынку.\n"
+        )
+        grid = (
+            "Варианты цены по маржам: "
+            + "; ".join(
+                f"маржа {s['margin_pct']}% -> цена {_money(s['price'])}"
+                for s in payload.get("scenarios", [])
+            )
+            + "\n"
+        )
+    else:
+        head = f"НМЦК (база): {_money(base['nmck'])}\n"
+        grid = (
+            "Сетка понижения: "
+            + "; ".join(
+                f"-{s['reduction_pct']}% -> прибыль {_money(s['profit'])}"
+                for s in payload.get("scenarios", [])
+            )
+            + "\n"
+        )
+    profit = totals.get("profit_at_nmck", totals.get("profit_at_offer"))
     analogs = "; ".join(str(a["title"]) for a in payload.get("analogs", []))
     return (
-        f"НМЦК (база): {base['nmck']:,.0f} ₽\n".replace(",", " ")
+        head
         + "СТРОКИ РАСЧЁТА (ключ | название | доля | сумма | источник):\n"
         + "\n".join(lines)
-        + f"\nИТОГО себестоимость: {totals['cost']:,.0f} ₽; ".replace(",", " ")
-        + (
-            f"прибыль при НМЦК: {totals['profit_at_nmck']:,.0f} ₽ ({totals['margin_pct']}%)\n"
-        ).replace(",", " ")
-        + f"Сетка понижения: {scenarios}\n"
+        + f"\nИТОГО себестоимость: {_money(totals['cost'])}; "
+        + f"прибыль: {_money(profit)} ({totals.get('margin_pct')}%)\n"
+        + grid
         + f"Мин. цена (маржа {payload['min_price']['min_margin_pct']}%): "
-        + f"{payload['min_price']['price']:,.0f} ₽\n".replace(",", " ")
+        + f"{_money(payload['min_price']['price'])}\n"
         + f"Проекты-аналоги: {analogs}\n"
         + "Предупреждения: "
         + "; ".join(payload.get("warnings", []))

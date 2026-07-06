@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import verdict_badge, score_pill %}
+{% from "_macros.html" import verdict_badge, score_pill, progress_bar %}
 {% block title %}{{ (t.subject or t.reestr_number)[:60] }}{% endblock %}
 
 {% macro cite(f) %}
@@ -187,10 +187,10 @@
           <span>{% if d.size_bytes < 1048576 %}{{ (d.size_bytes / 1024) | round | int }} КБ{% else %}{{ (d.size_bytes / 1048576) | round(1) }} МБ{% endif %}</span>
           <span>{{ d.uploaded_at | date_ru }}</span>
           {% if doc_job and doc_job.running and doc_job.doc_id == d.id %}
-          <span class="text-indigo-600 font-medium inline-flex items-center gap-1">
-            <svg class="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"></path></svg>
-            Разбираю ТЗ…
-          </span>
+          {# бар рисуется ниже, на всю ширину карточки документа #}
+          {% elif doc_job and doc_job.running %}
+          <button class="text-slate-300 font-medium cursor-not-allowed" disabled
+                  title="Идёт разбор другого документа — дождитесь завершения">Разобрать ТЗ</button>
           {% else %}
           <form action="/tender/{{ t.reestr_number }}/documents/{{ d.id }}/analyze" method="post"
                 onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Запускаю…';">
@@ -203,6 +203,10 @@
           </form>
         </div>
       </div>
+
+      {% if doc_job and doc_job.running and doc_job.doc_id == d.id %}
+      <div class="mt-3">{{ progress_bar('doc-progress', doc_job.phase or 'Разбираю ТЗ…') }}</div>
+      {% endif %}
 
       {% if a %}
       <div class="mt-3 pt-3 border-t border-slate-100">
@@ -265,16 +269,7 @@
 
   {% if doc_job and doc_job.running and doc_job.doc_id in (documents | map(attribute='id') | list) %}
   <script>
-  (function () {
-    var docId = {{ doc_job.doc_id }};
-    var poll = setInterval(async function () {
-      try {
-        var r = await fetch('/tender/{{ t.reestr_number }}/documents/' + docId + '/analysis-status', { headers: { 'Accept': 'application/json' } });
-        var s = await r.json();
-        if (!s.running) { clearInterval(poll); window.location.reload(); }
-      } catch (e) { /* сеть моргнула — повторим */ }
-    }, 4000);
-  })();
+  craftProgressPoll('/tender/{{ t.reestr_number }}/documents/{{ doc_job.doc_id }}/analysis-status', 'doc-progress', 3000);
   </script>
   {% endif %}
 
@@ -297,28 +292,40 @@
     {% endif %}
   </div>
 
-  {% if eco_job and eco_job.running and eco_job.reestr_number == t.reestr_number %}
-  <div class="text-sm text-indigo-600 font-medium inline-flex items-center gap-2 mb-3">
-    <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"></path></svg>
-    Считаю экономику: аналоги, разделы, доли…
+  {% if t.nmck is none %}
+  <div class="mb-3 bg-violet-50 border border-violet-200 rounded-md px-3 py-2.5">
+    <div class="text-[13px] text-violet-900 mb-2">
+      НМЦК не указана. Расчёт сформирует <b>цену предложения от себестоимости</b> (по затратам
+      проектов-аналогов и марже бюро). Если цена известна из источника — введите её, и расчёт
+      пойдёт классически, долями от цены.
+    </div>
+    <form action="/tender/{{ t.reestr_number }}/nmck" method="post" class="flex flex-wrap items-center gap-2">
+      <input name="nmck" placeholder="НМЦК, ₽ (если известна)"
+             class="border border-violet-200 rounded-md px-2.5 py-1 text-sm w-48">
+      <button class="text-xs px-3 py-1.5 rounded-md border border-violet-300 text-violet-800 bg-white hover:bg-violet-100">Сохранить НМЦК</button>
+    </form>
   </div>
+  {% endif %}
+
+  {% if eco_job and eco_job.running and eco_job.reestr_number == t.reestr_number %}
+  <div class="mb-3">{{ progress_bar('eco-progress', eco_job.phase or 'Считаю экономику…') }}</div>
   <script>
-  (function () {
-    var poll = setInterval(async function () {
-      try {
-        var r = await fetch('/tender/{{ t.reestr_number }}/economics/status', { headers: { 'Accept': 'application/json' } });
-        var s = await r.json();
-        if (!s.running) { clearInterval(poll); window.location.reload(); }
-      } catch (e) { /* сеть моргнула — повторим */ }
-    }, 4000);
-  })();
+  craftProgressPoll('/tender/{{ t.reestr_number }}/economics/status', 'eco-progress', 3000);
   </script>
+  {% elif eco_job and eco_job.running %}
+  <div class="mb-3 flex flex-wrap items-center gap-3">
+    <button class="bg-slate-200 text-slate-400 rounded-md px-4 py-1.5 text-sm font-medium cursor-not-allowed" disabled
+            title="Идёт расчёт по другому тендеру — дождитесь завершения">
+      {{ 'Пересчитать экономику' if economics else 'Предложить цену (ИИ)' }}
+    </button>
+    <span class="text-xs text-slate-400">идёт расчёт по тендеру {{ eco_job.reestr_number }} — дождитесь завершения</span>
+  </div>
   {% else %}
   <form action="/tender/{{ t.reestr_number }}/economics/propose" method="post"
         class="flex flex-wrap items-center gap-3 mb-3"
         onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Запускаю…';">
     <button class="bg-indigo-600 text-white rounded-md px-4 py-1.5 text-sm font-medium hover:bg-indigo-500 disabled:opacity-60">
-      {{ 'Пересчитать экономику' if economics else 'Предложить цену (ИИ)' }}
+      {{ 'Пересчитать экономику' if economics else ('Сформировать предложение (ИИ)' if t.nmck is none else 'Предложить цену (ИИ)') }}
     </button>
     <label class="text-xs text-slate-500 inline-flex items-center gap-1.5">
       <input type="checkbox" name="deep" value="1" class="rounded border-slate-300">
@@ -331,11 +338,12 @@
 
   {% if economics %}
   {% set pl = economics.payload %}
+  {% set offer = pl.base.nmck is none %}
   <div class="text-xs text-slate-400 mb-3">
     Версия от {{ economics.created_at | date_ru(true) }} ·
     {{ 'правка человека' if economics.created_by == 'user' else 'расчёт ИИ (' ~ (economics.model or '—') ~ ')' }}
     {% if pl.deep %} · глубокий режим{% endif %}
-    · база: {{ pl.base.nmck | money('₽') }}
+    · база: {{ 'предложение от себестоимости (НМЦК нет)' if offer else pl.base.nmck | money('₽') }}
     {% if pl.base.mode == 'pd_share' and pl.base.pd_share_pct %} · на ПД ~{{ pl.base.pd_share_pct }}% цены ({{ pl.base.rationale }}){% endif %}
     {% if pl.base.object_kind %} · тип: {{ {'building': 'здание', 'landscaping': 'благоустройство', 'heritage': 'ОКН', 'linear': 'линейный', 'other': 'прочее'}.get(pl.base.object_kind, pl.base.object_kind) }}{% endif %}
     {% if pl.base.design_stage %} · стадия: {{ {'pd': 'ПД', 'rd': 'РД', 'pd_rd': 'ПД+РД'}.get(pl.base.design_stage, pl.base.design_stage) }}{% endif %}
@@ -373,7 +381,7 @@
                      class="w-28 border border-slate-200 rounded px-1.5 py-0.5 text-right {{ 'bg-amber-50' if line.source == 'no_data' }}">
             </td>
             <td class="py-1.5 pr-2 text-xs text-slate-500">
-              {% if line.source == 'analog' %}медиана по {{ line.n_analogs }} аналог.{% if line.range_pct %} ({{ line.range_pct[0] }}–{{ line.range_pct[1] }}%){% endif %}
+              {% if line.source == 'analog' %}медиана по {{ line.n_analogs }} аналог.{% if line.range_pct %} ({{ line.range_pct[0] }}–{{ line.range_pct[1] }}%){% endif %}{% if line.range_amount %} ({{ line.range_amount[0] | money('') }}–{{ line.range_amount[1] | money('₽') }}){% endif %}
               {% elif line.source == 'sbcp' %}<span class="text-sky-700 font-medium">норматив СБЦП</span> (приведён к затратам бюро)
               {% elif line.source == 'ai' %}ИИ по типу проекта{% if line.range_pct %}, диапазон истории {{ line.range_pct[0] }}–{{ line.range_pct[1] }}%{% endif %}
               {% elif line.source == 'user' %}правка человека
@@ -390,13 +398,33 @@
             <td class="py-2 pr-2">ИТОГО себестоимость</td>
             <td class="py-2 pr-2 text-right">{{ ((pl.totals.cost / pl.base.nmck * 100) | round(1)) if pl.base.nmck else '' }}</td>
             <td class="py-2 pr-2 text-right whitespace-nowrap">{{ pl.totals.cost | money('') }}</td>
-            <td class="py-2 pr-2 text-xs font-normal text-slate-500">прибыль при НМЦК: {{ pl.totals.profit_at_nmck | money('₽') }} ({{ pl.totals.margin_pct }}%)</td>
+            <td class="py-2 pr-2 text-xs font-normal text-slate-500">
+              {% if offer %}
+              прибыль при предложенной цене: {{ pl.totals.profit_at_offer | money('₽') }} ({{ pl.totals.margin_pct }}%)
+              {% else %}
+              прибыль при НМЦК: {{ pl.totals.profit_at_nmck | money('₽') }} ({{ pl.totals.margin_pct }}%)
+              {% endif %}
+            </td>
           </tr>
+          {% if offer %}
+          <tr class="font-semibold text-indigo-900 bg-indigo-50/60">
+            <td class="py-2 pr-2">ПРЕДЛОЖЕНИЕ ЦЕНЫ (себестоимость + маржа {{ pl.totals.margin_pct }}%)</td>
+            <td></td>
+            <td class="py-2 pr-2 text-right whitespace-nowrap text-base">{{ pl.totals.price | money('') }}</td>
+            <td class="py-2 pr-2 text-xs font-normal text-indigo-800/70">цена = себестоимость разделов ÷ (1 − накладные% − маржа%)</td>
+          </tr>
+          {% endif %}
         </tfoot>
       </table>
     </div>
     <div class="flex flex-wrap items-center gap-3 mt-3">
       <button class="bg-slate-900 text-white rounded-md px-4 py-1.5 text-sm hover:bg-slate-700">Сохранить правки (новая версия)</button>
+      {% if offer %}
+      <label class="text-xs text-slate-500">целевая маржа, %:
+        <input name="target_margin_pct" value="{{ pl.params.target_margin_pct }}"
+               class="w-14 border border-slate-200 rounded px-1.5 py-0.5 text-right ml-1">
+      </label>
+      {% endif %}
       <label class="text-xs text-slate-500">мин. маржа, %:
         <input name="min_margin_pct" value="{{ pl.params.min_margin_pct }}"
                class="w-14 border border-slate-200 rounded px-1.5 py-0.5 text-right ml-1">
@@ -407,18 +435,18 @@
 
   <div class="grid md:grid-cols-2 gap-4 mt-5">
     <div>
-      <div class="text-xs font-semibold text-slate-500 mb-1.5">Сетка понижения цены</div>
+      <div class="text-xs font-semibold text-slate-500 mb-1.5">{{ 'Варианты цены по марже' if offer else 'Сетка понижения цены' }}</div>
       <table class="w-full text-[13px]">
         <thead><tr class="text-xs text-slate-400 text-left border-b border-slate-200">
-          <th class="py-1 font-medium">снижение</th><th class="py-1 font-medium text-right">цена</th><th class="py-1 font-medium text-right">прибыль</th><th class="py-1 font-medium text-right">маржа</th>
+          <th class="py-1 font-medium">{{ 'маржа' if offer else 'снижение' }}</th><th class="py-1 font-medium text-right">цена</th><th class="py-1 font-medium text-right">прибыль</th>{% if not offer %}<th class="py-1 font-medium text-right">маржа</th>{% endif %}
         </tr></thead>
         <tbody>
           {% for sc in pl.scenarios %}
           <tr class="border-b border-slate-100 {{ 'text-red-700' if sc.profit < 0 }}">
-            <td class="py-1">−{{ sc.reduction_pct }}%</td>
+            <td class="py-1">{{ (sc.margin_pct ~ '%') if offer else ('−' ~ sc.reduction_pct ~ '%') }}</td>
             <td class="py-1 text-right whitespace-nowrap">{{ sc.price | money('') }}</td>
             <td class="py-1 text-right whitespace-nowrap">{{ sc.profit | money('') }}</td>
-            <td class="py-1 text-right">{{ sc.margin_pct }}%</td>
+            {% if not offer %}<td class="py-1 text-right">{{ sc.margin_pct }}%</td>{% endif %}
           </tr>
           {% endfor %}
         </tbody>
@@ -426,7 +454,11 @@
       <div class="mt-2 text-[13px] text-slate-800 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
         Минимально допустимая цена (маржа {{ pl.min_price.min_margin_pct | round | int }}%):
         <span class="font-semibold">{{ pl.min_price.price | money('₽') }}</span>
+        {% if pl.min_price.max_reduction_pct is not none %}
         — снижение до <span class="font-semibold">{{ pl.min_price.max_reduction_pct }}%</span> от НМЦК
+        {% else %}
+        — ниже опускаться нельзя
+        {% endif %}
       </div>
     </div>
     <div>

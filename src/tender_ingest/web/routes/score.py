@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Annotated
 from urllib.parse import urlencode
 
@@ -32,6 +33,28 @@ def run_scoring(request: Request, all: Annotated[str | None, Form()] = None) -> 
 
 @router.get("/score/status")
 def scoring_status(request: Request) -> JSONResponse:
-    """Прогресс текущего прогона (для поллинга со страницы списка)."""
+    """Прогресс текущего прогона (для поллинга со страницы списка).
+
+    У скоринга прогресс НАСТОЯЩИЙ (оценено/всего по батчам); ETA — по фактической
+    скорости: прошло/оценено × осталось. До первого батча — «готовлю…» без процентов.
+    """
     s = job.snapshot()
-    return JSONResponse({"running": s.running, "done": s.done, "total": s.total})
+    progress: int | None = None
+    eta: int | None = None
+    phase = "готовлю очередь…"
+    if s.running and s.total > 0:
+        progress = int(s.done / s.total * 100)
+        phase = f"оценено {s.done} из {s.total}"
+        if s.done > 0 and s.started_at is not None:
+            elapsed = (dt.datetime.now(dt.UTC) - s.started_at).total_seconds()
+            eta = max(5, int(elapsed / s.done * (s.total - s.done)))
+    return JSONResponse(
+        {
+            "running": s.running,
+            "done": s.done,
+            "total": s.total,
+            "progress": progress,
+            "eta": eta,
+            "phase": phase,
+        }
+    )

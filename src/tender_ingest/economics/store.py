@@ -7,7 +7,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import statistics
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from sqlalchemy import delete, select
@@ -19,7 +20,7 @@ from tender_ingest.economics.xlsx import ParsedProject
 
 @dataclass(frozen=True)
 class AnalogProject:
-    """Слепок проекта для подбора аналогов и статистики долей."""
+    """Слепок проекта для подбора аналогов и статистики долей/сумм."""
 
     id: int
     sheet: str  # work | preliminary
@@ -27,6 +28,7 @@ class AnalogProject:
     contract_total: float | None
     sections: dict[str, float]  # canon -> суммарная доля от цены договора (0..1)
     section_names: dict[str, list[str]]  # canon -> исходные названия строк
+    amounts: dict[str, float] = field(default_factory=dict)  # canon -> сумма затрат, ₽
 
 
 @dataclass(frozen=True)
@@ -98,13 +100,21 @@ class EconomicsStore:
                 EconomicsLine.canon,
                 EconomicsLine.share,
                 EconomicsLine.name_raw,
-            ).where(EconomicsLine.canon.is_not(None), EconomicsLine.share.is_not(None))
+                EconomicsLine.planned,
+                EconomicsLine.fact,
+            ).where(EconomicsLine.canon.is_not(None))
         ).all()
         by_project: dict[int, dict[str, float]] = {}
+        amounts: dict[int, dict[str, float]] = {}
         names: dict[int, dict[str, list[str]]] = {}
-        for project_id, canon, share, name_raw in lines:
-            sections = by_project.setdefault(project_id, {})
-            sections[canon] = sections.get(canon, 0.0) + float(share)
+        for project_id, canon, share, name_raw, planned, fact in lines:
+            if share is not None:
+                sections = by_project.setdefault(project_id, {})
+                sections[canon] = sections.get(canon, 0.0) + float(share)
+            value = planned if planned is not None else fact
+            if value is not None and value > 0:
+                sums = amounts.setdefault(project_id, {})
+                sums[canon] = sums.get(canon, 0.0) + float(value)
             names.setdefault(project_id, {}).setdefault(canon, []).append(name_raw)
         return [
             AnalogProject(
@@ -114,9 +124,25 @@ class EconomicsStore:
                 contract_total=float(p.contract_total) if p.contract_total is not None else None,
                 sections=by_project.get(p.id, {}),
                 section_names=names.get(p.id, {}),
+                amounts=amounts.get(p.id, {}),
             )
             for p in projects
         ]
+
+    def bureau_margin_median_pct(self) -> float | None:
+        """Медианная маржа бюро по базе: 1 − себестоимость/договор (в процентах)."""
+        rows = self.session.execute(
+            select(EconomicsProject.contract_total, EconomicsProject.cost_planned).where(
+                EconomicsProject.contract_total.is_not(None),
+                EconomicsProject.cost_planned.is_not(None),
+            )
+        ).all()
+        margins = [
+            float(1 - cost / contract) * 100
+            for contract, cost in rows
+            if contract and cost and 0 < cost < contract
+        ]
+        return round(statistics.median(margins), 1) if len(margins) >= 5 else None
 
     def knowledge_base_size(self) -> int:
         return len(self.session.execute(select(EconomicsProject.id)).all())

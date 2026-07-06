@@ -36,6 +36,7 @@ def index(  # noqa: PLR0913 — плоский разбор query-парамет
     nmck_max: str | None = None,
     upload: str | None = None,
     fav: str | None = None,
+    closed: str | None = None,
     sort: str | None = None,
     page: str | None = None,
     msg: str | None = None,
@@ -51,6 +52,7 @@ def index(  # noqa: PLR0913 — плоский разбор query-парамет
         nmck_max=nmck_max,
         upload=upload,
         fav=fav,
+        closed=closed,
         sort=sort,
         page=page,
     )

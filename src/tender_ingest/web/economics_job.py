@@ -25,6 +25,10 @@ class EcoJobSnapshot:
     message: str
     error: str | None
     finished_at: dt.datetime | None
+    started_at: dt.datetime | None = None
+    phase: str = ""
+    phase_fraction: float = 0.0
+    estimate_sec: float = 110.0
 
 
 class EconomicsJob:
@@ -37,11 +41,23 @@ class EconomicsJob:
         self._message = ""
         self._error: str | None = None
         self._finished_at: dt.datetime | None = None
+        self._started_at: dt.datetime | None = None
+        self._phase = ""
+        self._phase_fraction = 0.0
+        self._estimate_sec = 110.0
 
     def snapshot(self) -> EcoJobSnapshot:
         with self._lock:
             return EcoJobSnapshot(
-                self._running, self._reestr, self._message, self._error, self._finished_at
+                self._running,
+                self._reestr,
+                self._message,
+                self._error,
+                self._finished_at,
+                self._started_at,
+                self._phase,
+                self._phase_fraction,
+                self._estimate_sec,
             )
 
     def start(self, reestr_number: str, *, deep: bool) -> bool:
@@ -54,8 +70,18 @@ class EconomicsJob:
             self._message = ""
             self._error = None
             self._finished_at = None
+            self._started_at = dt.datetime.now(dt.UTC)
+            self._phase = "готовлю данные тендера"
+            self._phase_fraction = 0.02
+            # ~2 LLM-вызова: подбор аналогов + ревью с веб-поиском; deep читает всё ТЗ
+            self._estimate_sec = 150.0 if deep else 110.0
         threading.Thread(target=self._run, args=(reestr_number, deep), daemon=True).start()
         return True
+
+    def _set_phase(self, phase: str, fraction: float) -> None:
+        with self._lock:
+            self._phase = phase
+            self._phase_fraction = fraction
 
     def _finish(self, message: str, error: str | None = None) -> None:
         with self._lock:
@@ -66,7 +92,7 @@ class EconomicsJob:
 
     def _run(self, reestr_number: str, deep: bool) -> None:
         try:
-            payload = calculate_economics(reestr_number, deep=deep)
+            payload = calculate_economics(reestr_number, deep=deep, on_phase=self._set_phase)
             cost = payload["totals"]["cost"]
             self._finish(f"Расчёт экономики готов: себестоимость {cost:,.0f} ₽".replace(",", " "))
         except EconomicsPreconditionError as exc:

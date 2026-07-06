@@ -4,7 +4,33 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Тендеры{% endblock %} · КРАФТ</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/tailwind.css">
+  <script>
+  /* Поллинг фоновой джобы: обновляет прогресс-бар (фаза, ширина, ETA), по завершении
+     перезагружает страницу. Используется разбором ТЗ, экономикой и скорингом. */
+  window.craftProgressPoll = function (url, barId, intervalMs) {
+    var el = document.getElementById(barId);
+    if (!el) return;
+    var fill = el.querySelector('[data-role=fill]');
+    var phase = el.querySelector('[data-role=phase]');
+    var eta = el.querySelector('[data-role=eta]');
+    function fmtEta(sec) {
+      if (sec == null) return '';
+      if (sec < 90) return 'осталось ~' + Math.max(5, Math.round(sec / 5) * 5) + ' сек';
+      return 'осталось ~' + Math.round(sec / 60) + ' мин';
+    }
+    var poll = setInterval(async function () {
+      try {
+        var r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        var s = await r.json();
+        if (!s.running) { clearInterval(poll); window.location.reload(); return; }
+        if (s.progress != null) fill.style.width = Math.max(4, Math.min(97, s.progress)) + '%';
+        if (s.phase) phase.textContent = s.phase;
+        eta.textContent = fmtEta(s.eta);
+      } catch (e) { /* сеть моргнула — повторим */ }
+    }, intervalMs || 3000);
+  };
+  </script>
 </head>
 <body class="bg-slate-50 text-slate-800 antialiased">
   {% if show_nav | default(true) %}

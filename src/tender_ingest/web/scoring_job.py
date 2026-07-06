@@ -32,6 +32,7 @@ class JobSnapshot:
     message: str
     error: str | None
     finished_at: dt.datetime | None
+    started_at: dt.datetime | None = None
 
 
 class ScoringJob:
@@ -45,6 +46,7 @@ class ScoringJob:
         self._message = ""
         self._error: str | None = None
         self._finished_at: dt.datetime | None = None
+        self._started_at: dt.datetime | None = None
 
     def snapshot(self) -> JobSnapshot:
         with self._lock:
@@ -55,6 +57,7 @@ class ScoringJob:
                 message=self._message,
                 error=self._error,
                 finished_at=self._finished_at,
+                started_at=self._started_at,
             )
 
     def start(self, *, requeue: bool) -> bool:
@@ -68,6 +71,7 @@ class ScoringJob:
             self._message = ""
             self._error = None
             self._finished_at = None
+            self._started_at = dt.datetime.now(dt.UTC)
         threading.Thread(target=self._run, args=(requeue,), daemon=True).start()
         return True
 

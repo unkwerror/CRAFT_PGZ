@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -14,7 +15,8 @@ from tender_ingest.economics.engine import apply_edits
 from tender_ingest.economics.export import build_economics_xlsx
 from tender_ingest.economics.store import EconomicsStore
 from tender_ingest.web.economics_job import job as eco_job
-from tender_ingest.web.repository import WebRepository
+from tender_ingest.web.progress import time_progress
+from tender_ingest.web.repository import DocumentRepository, WebRepository
 from tender_ingest.web.security import require_auth
 
 router = APIRouter(dependencies=[Depends(require_auth)])
@@ -39,24 +41,65 @@ def _to_float(raw: object) -> float | None:
 
 @router.post("/tender/{reestr_number}/economics/propose")
 def propose_economics(request: Request, reestr_number: str, deep: str = "") -> RedirectResponse:
-    """Запустить расчёт экономики в фоне: бриф ТЗ + аналоги -> Claude -> движок."""
+    """Запустить расчёт экономики в фоне: бриф ТЗ + аналоги -> Claude -> движок.
+
+    Предусловия проверяются ЗДЕСЬ, до старта джобы — пользователь сразу видит причину.
+    НМЦК не обязательна: без неё формируется цена ПРЕДЛОЖЕНИЯ от себестоимости.
+    """
     with get_session_factory()() as session:
         if WebRepository(session).get(reestr_number) is None:
             return _detail(reestr_number, "Тендер не найден")
+        if not DocumentRepository(session).latest_analyses_for(reestr_number):
+            return _detail(
+                reestr_number,
+                "Сначала разберите ТЗ (кнопка «Разобрать ТЗ» у документа) — "
+                "расчёт экономики идёт по брифу",
+            )
+        if EconomicsStore(session).knowledge_base_size() == 0:
+            return _detail(
+                reestr_number,
+                "База «Экономики» пуста — импортируйте файл: tender economics-import --file …",
+            )
     started = eco_job.start(reestr_number, deep=bool(deep.strip()))
     msg = (
-        "Расчёт экономики запущен в фоне — займёт около минуты"
+        "Расчёт экономики запущен в фоне — займёт 1–3 минуты"
         if started
         else "Уже идёт другой расчёт экономики — дождитесь его завершения"
     )
     return _detail(reestr_number, msg)
 
 
+@router.post("/tender/{reestr_number}/nmck")
+def set_nmck(request: Request, reestr_number: str, nmck: str = "") -> RedirectResponse:
+    """Ручной ввод НМЦК (закрытые тендеры, где цена известна источнику, а не ТЗ)."""
+    text = nmck.replace("\xa0", "").replace(" ", "").replace(",", ".").strip()
+    try:
+        value = Decimal(text)
+    except InvalidOperation:
+        return _detail(reestr_number, "НМЦК не распознана — введите число в рублях")
+    if value <= 0:
+        return _detail(reestr_number, "НМЦК должна быть больше нуля")
+    with get_session_factory()() as session:
+        found = WebRepository(session).get(reestr_number)
+        if found is None:
+            return _detail(reestr_number, "Тендер не найден")
+        tender = found[0]
+        tender.nmck = value
+        tender.currency = tender.currency or "RUB"
+        session.add(tender)
+        session.commit()
+    return _detail(reestr_number, "НМЦК сохранена — расчёт теперь пойдёт от этой цены")
+
+
 @router.get("/tender/{reestr_number}/economics/status")
 def economics_status(request: Request, reestr_number: str) -> JSONResponse:
-    """Идёт ли расчёт ИМЕННО этого тендера (для поллинга с карточки)."""
-    snapshot = eco_job.snapshot()
-    return JSONResponse({"running": snapshot.running and snapshot.reestr_number == reestr_number})
+    """Прогресс расчёта ИМЕННО этого тендера (для прогресс-бара на карточке)."""
+    s = eco_job.snapshot()
+    running = s.running and s.reestr_number == reestr_number
+    if not running:
+        return JSONResponse({"running": False})
+    progress, eta = time_progress(s.started_at, s.estimate_sec, min_fraction=s.phase_fraction)
+    return JSONResponse({"running": True, "progress": progress, "eta": eta, "phase": s.phase})
 
 
 def _changed(current: object, new: float | None) -> bool:
@@ -92,10 +135,18 @@ async def edit_economics(request: Request, reestr_number: str, calc_id: int) -> 
         margin = _to_float(form.get("min_margin_pct"))
         current_margin = float(payload.get("params", {}).get("min_margin_pct", 0.0))
         margin_changed = margin is not None and abs(margin - current_margin) > 0.004
-        if not edits and not margin_changed:
+        target = _to_float(form.get("target_margin_pct"))
+        current_target = float(payload.get("params", {}).get("target_margin_pct", 0.0))
+        target_changed = target is not None and abs(target - current_target) > 0.004
+        if not edits and not margin_changed and not target_changed:
             return _detail(reestr_number, "Изменений нет — расчёт не пересохранён")
 
-        new_payload = apply_edits(payload, edits, min_margin_pct=margin if margin_changed else None)
+        new_payload = apply_edits(
+            payload,
+            edits,
+            min_margin_pct=margin if margin_changed else None,
+            target_margin_pct=target if target_changed else None,
+        )
         store.add_calculation(reestr_number, created_by="user", model=None, payload=new_payload)
     return _detail(reestr_number, "Правки сохранены, итоги пересчитаны (новая версия)")
 

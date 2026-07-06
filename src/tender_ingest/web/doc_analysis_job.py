@@ -103,6 +103,9 @@ class DocJobSnapshot:
     message: str
     error: str | None
     finished_at: dt.datetime | None
+    started_at: dt.datetime | None = None
+    phase: str = ""
+    estimate_sec: float = 90.0
 
 
 class DocAnalysisJob:
@@ -115,11 +118,21 @@ class DocAnalysisJob:
         self._message = ""
         self._error: str | None = None
         self._finished_at: dt.datetime | None = None
+        self._started_at: dt.datetime | None = None
+        self._phase = ""
+        self._estimate_sec = 90.0
 
     def snapshot(self) -> DocJobSnapshot:
         with self._lock:
             return DocJobSnapshot(
-                self._running, self._doc_id, self._message, self._error, self._finished_at
+                self._running,
+                self._doc_id,
+                self._message,
+                self._error,
+                self._finished_at,
+                self._started_at,
+                self._phase,
+                self._estimate_sec,
             )
 
     def start(self, doc_id: int) -> bool:
@@ -132,8 +145,17 @@ class DocAnalysisJob:
             self._message = ""
             self._error = None
             self._finished_at = None
+            self._started_at = dt.datetime.now(dt.UTC)
+            self._phase = "читаю файл"
+            self._estimate_sec = 90.0
         threading.Thread(target=self._run, args=(doc_id,), daemon=True).start()
         return True
+
+    def _set_phase(self, phase: str, estimate_sec: float | None = None) -> None:
+        with self._lock:
+            self._phase = phase
+            if estimate_sec is not None:
+                self._estimate_sec = estimate_sec
 
     def _finish(self, message: str, error: str | None = None) -> None:
         with self._lock:
@@ -163,15 +185,21 @@ class DocAnalysisJob:
             extracted = extract_text(filename, content_type, data)
             analyzer = create_document_analyzer()
             if extracted.kind == "pdf" and extracted.low_text:
-                # скан без текстового слоя -> отдаём PDF Claude, он распознаёт сам
+                # скан без текстового слоя -> отдаём PDF Claude, он распознаёт сам.
+                # Оценка длительности: ~85 сек на кусок ≤100 стр. + слияние брифов.
+                chunks = max(1, -(-min(extracted.pages or 40, 300) // 100))
+                estimate = 40.0 + 85.0 * chunks + (35.0 if chunks > 1 else 0.0)
+                self._set_phase("распознаю скан и разбираю ТЗ (ИИ)", estimate)
                 brief = analyzer.analyze_pdf(data, context, extract_card)
                 pages, truncated = (extracted.pages or None), False
             elif extracted.text.strip():
+                self._set_phase("разбираю ТЗ (ИИ)", 80.0)
                 brief = analyzer.analyze(extracted.text, context, extract_card)
                 pages, truncated = (extracted.pages or None), extracted.truncated
             else:
                 self._finish("Файл пуст или не удалось извлечь содержимое")
                 return
+            self._set_phase("сохраняю бриф")
 
             # 3) короткая сессия: сохраняем бриф (+карточка закрытого тендера из ТЗ)
             filled: list[str] = []

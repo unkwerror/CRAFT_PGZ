@@ -7,9 +7,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from tender_ingest.config import get_settings
@@ -38,6 +41,10 @@ def create_app() -> FastAPI:
         log.warning("insecure_defaults", detail="смените WEB_PASSWORD и SESSION_SECRET в .env")
 
     app = FastAPI(title="Закупки бюро", docs_url=None, redoc_url=None, openapi_url=None)
+    # Статика: продакшен-сборка Tailwind (см. tailwind.config.js в корне репо), без CDN.
+    app.mount(
+        "/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static"
+    )
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.session_secret,
