@@ -133,9 +133,14 @@
     <button class="bg-slate-900 text-white rounded-md px-4 py-1.5 text-sm hover:bg-slate-700">Применить</button>
     <a href="/" class="text-sm text-slate-500 hover:text-slate-800 py-1.5">сбросить</a>
   </div>
-  <label class="flex items-center gap-2 text-sm text-slate-600 mt-2">
-    <input type="checkbox" name="exact" value="1" {{ 'checked' if f.exact }}> Точное соответствие (фраза целиком)
-  </label>
+  <div class="flex items-center gap-5 mt-2">
+    <label class="flex items-center gap-2 text-sm text-slate-600">
+      <input type="checkbox" name="exact" value="1" {{ 'checked' if f.exact }}> Точное соответствие (фраза целиком)
+    </label>
+    <label class="flex items-center gap-2 text-sm text-slate-600">
+      <input type="checkbox" name="fav" value="1" {{ 'checked' if f.fav }}> ★ Только избранные
+    </label>
+  </div>
 </form>
 
 <div class="text-sm text-slate-500 mb-2">Найдено: {{ total }} из {{ facets.total }}</div>
@@ -148,8 +153,15 @@
       <div class="shrink-0 pt-0.5">{{ score_pill(r.score) }}</div>
       <div class="min-w-0 grow">
         <div class="flex items-start justify-between gap-3">
-          <div class="font-medium text-slate-900 leading-snug">{{ r.subject or '(без названия)' }}</div>
-          <div class="shrink-0">{{ verdict_badge(r.verdict) }}</div>
+          <div class="font-medium text-slate-900 leading-snug">{% if r.is_favorite %}<span class="text-amber-400">★</span> {% endif %}{{ r.subject or '(без названия)' }}</div>
+          <div class="shrink-0 flex items-center gap-1.5">
+            {% if r.participation_status %}
+            <span class="text-[11px] px-1.5 py-0.5 rounded border {{ 'bg-emerald-50 text-emerald-700 border-emerald-200' if r.participation_status == 'won' else ('bg-red-50 text-red-700 border-red-100' if r.participation_status == 'lost' else 'bg-sky-50 text-sky-700 border-sky-100') }}">
+              {{ {'applied': 'участвуем', 'rejected': 'не допущены', 'lost': 'проиграли', 'won': 'выиграли'}[r.participation_status] }}
+            </span>
+            {% endif %}
+            {{ verdict_badge(r.verdict) }}
+          </div>
         </div>
         {% if r.summary %}
         <p class="text-[13px] leading-6 text-slate-600 mt-1.5 line-clamp-2">{{ r.summary }}</p>

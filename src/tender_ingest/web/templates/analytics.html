@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Аналитика{% endblock %}
+
+{% macro stat(label, value, hint='') %}
+<div class="bg-white rounded-lg border border-slate-200 p-4">
+  <div class="text-xs text-slate-400">{{ label }}</div>
+  <div class="text-xl font-semibold text-slate-900 mt-1">{{ value }}</div>
+  {% if hint %}<div class="text-[11px] text-slate-400 mt-0.5">{{ hint }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+{% block content %}
+
+<div class="flex items-center justify-between gap-3 mb-4">
+  <h1 class="text-lg font-semibold text-slate-900">Аналитика</h1>
+  <div class="flex gap-1">
+    {% for c in cohorts %}
+    <a href="/analytics?cohort={{ c }}"
+       class="px-3 py-1.5 rounded-md text-sm border {{ 'bg-slate-900 text-white border-slate-900' if c == cohort else 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50' }}">{{ cohort_labels[c] }}</a>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Рынок -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+  {{ stat('Закупок в когорте', market.total) }}
+  {{ stat('Срок на подачу заявки',
+          (market.duration_median_days | round(0) | int ~ ' дн.') if market.duration_median_days is not none else '—',
+          ('в среднем ' ~ (market.duration_avg_days | round(1)) ~ ' дн.') if market.duration_avg_days is not none else '') }}
+  {{ stat('Медианная НМЦ', market.nmck_median | money if market.nmck_median is not none else '—',
+          ('p25–p75: ' ~ (market.nmck_p25 | money('')) ~ '–' ~ (market.nmck_p75 | money(''))) if market.nmck_p25 is not none else '') }}
+  {{ stat('С авансом',
+          (market.advance_share_pct | round(0) | int ~ '%') if market.advance_share_pct is not none else '—',
+          ('средний аванс ' ~ (market.advance_avg_pct | round(0) | int) ~ '%') if market.advance_avg_pct is not none else '') }}
+</div>
+
+<!-- Участие бюро -->
+<h2 class="text-sm font-semibold text-slate-500 mt-6 mb-2">Наше участие (по всем отмеченным)</h2>
+{% set total_part = p.counts.values() | sum %}
+{% if total_part %}
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+  {{ stat('Участий отмечено', total_part,
+          p.counts.items() | map('join', ': ') | join(' · ') if p.counts else '') }}
+  {{ stat('Win rate', (p.win_rate_pct | round(0) | int ~ '%') if p.win_rate_pct is not none else '—',
+          'выиграли / (выиграли + проиграли)') }}
+  {{ stat('Снижение победителя от НМЦ',
+          (p.reduction_avg_pct | round(1) ~ '%') if p.reduction_avg_pct is not none else '—',
+          'по торгам с известной ценой победителя') }}
+  {{ stat('Наша цена vs победитель',
+          ('+' ~ (p.our_gap_avg_pct | round(1)) ~ '%') if p.our_gap_avg_pct is not none else '—',
+          'в проигранных торгах — сигнал «завышаем»') }}
+</div>
+{% if p.avg_score_won is not none and p.avg_score_lost is not none %}
+<p class="text-xs text-slate-400 mt-2">Средний ИИ-score выигранных: {{ p.avg_score_won | round(0) | int }},
+  проигранных: {{ p.avg_score_lost | round(0) | int }} — валидация скоринга.</p>
+{% endif %}
+{% else %}
+<div class="bg-white rounded-lg border border-slate-200 p-4 text-sm text-slate-400">
+  Участий пока не отмечено. Заполняйте блок «Участие бюро» на карточках тендеров —
+  появится win rate, среднее снижение цены и точность наших ставок.
+</div>
+{% endif %}
+
+<!-- Динамика по месяцам -->
+<h2 class="text-sm font-semibold text-slate-500 mt-6 mb-2">Динамика публикаций (по месяцам)</h2>
+<div class="bg-white rounded-lg border border-slate-200 p-4">
+  {% if monthly %}
+  <div class="flex items-end gap-2 h-36">
+    {% for pt in monthly %}
+    <div class="flex-1 flex flex-col items-center gap-1 min-w-0">
+      <div class="text-[10px] text-slate-500">{{ pt.count }}</div>
+      <div class="w-full bg-emerald-400/80 rounded-t"
+           style="height: {{ (pt.count / max_month_count * 100) | round(0) | int if max_month_count else 0 }}%"></div>
+      <div class="text-[10px] text-slate-400 truncate w-full text-center">{{ pt.month[2:] }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="text-[11px] text-slate-400 mt-2">
+    Медианная НМЦ последнего месяца: {{ monthly[-1].nmck_median | money if monthly[-1].nmck_median is not none else '—' }}
+  </div>
+  {% else %}
+  <p class="text-sm text-slate-400">Нет данных о датах публикации.</p>
+  {% endif %}
+</div>
+
+<!-- Топ заказчиков -->
+<h2 class="text-sm font-semibold text-slate-500 mt-6 mb-2">Топ заказчиков когорты</h2>
+<div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+  {% if customers %}
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="text-left text-xs text-slate-400 border-b border-slate-100">
+        <th class="px-4 py-2 font-medium">Заказчик</th>
+        <th class="px-4 py-2 font-medium">ИНН</th>
+        <th class="px-4 py-2 font-medium text-right">Закупок</th>
+        <th class="px-4 py-2 font-medium text-right">Медианная НМЦ</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in customers %}
+      <tr class="border-b border-slate-50">
+        <td class="px-4 py-2 text-slate-800">{{ c.name }}</td>
+        <td class="px-4 py-2 text-slate-400">{{ c.inn or '—' }}</td>
+        <td class="px-4 py-2 text-right">{{ c.count }}</td>
+        <td class="px-4 py-2 text-right">{{ c.nmck_median | money if c.nmck_median is not none else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="p-4 text-sm text-slate-400">Нет данных.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

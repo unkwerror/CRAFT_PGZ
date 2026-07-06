@@ -13,6 +13,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -266,6 +267,92 @@ class DocumentAnalysis(Base):
     brief: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)  # summary+поля+findings
     pages: Mapped[int | None] = mapped_column(Integer)
     truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class TenderFavorite(Base):
+    """Избранная закупка (звёздочка в вебе). Отдельная когорта в аналитике и приоритет в RAG."""
+
+    __tablename__ = "tender_favorites"
+
+    reestr_number: Mapped[str] = mapped_column(
+        Text, ForeignKey("tenders.reestr_number", ondelete="CASCADE"), primary_key=True
+    )
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class TenderParticipation(Base):
+    """Факт участия бюро и исход торгов — скелет аналитики экономики и корпуса RAG.
+
+    Заполняется вручную из веба. Одна запись на закупку (upsert): статус может меняться
+    по мере хода торгов (подали -> проиграли/выиграли).
+    """
+
+    __tablename__ = "tender_participation"
+
+    reestr_number: Mapped[str] = mapped_column(
+        Text, ForeignKey("tenders.reestr_number", ondelete="CASCADE"), primary_key=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)  # applied|rejected|lost|won
+    our_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    winner_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    decided_at: Mapped[dt.date | None] = mapped_column(Date)
+    comment: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class TenderNote(Base):
+    """Заметка бюро по закупке (свободный текст). Попадает в промпт ИИ-экономиста дословно."""
+
+    __tablename__ = "tender_notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    reestr_number: Mapped[str] = mapped_column(
+        Text, ForeignKey("tenders.reestr_number", ondelete="CASCADE"), index=True, nullable=False
+    )
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AiRecommendation(Base):
+    """Рекомендация ИИ-экономиста по закупке (RAG). Append-only: показываем последнюю."""
+
+    __tablename__ = "ai_recommendations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    reestr_number: Mapped[str] = mapped_column(
+        Text, ForeignKey("tenders.reestr_number", ondelete="CASCADE"), index=True, nullable=False
+    )
+    model: Mapped[str] = mapped_column(String(40), nullable=False)
+    recommendation: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class RecommendationFeedback(Base):
+    """Оценка рекомендации пользователем («в точку»/«мимо»). Промахи -> контрпримеры в промпт."""
+
+    __tablename__ = "recommendation_feedback"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    recommendation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("ai_recommendations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    useful: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -19,11 +19,20 @@
 {% if eco_job_msg %}
 <div class="mb-4 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5">{{ eco_job_msg }}</div>
 {% endif %}
+{% if econ_job_msg %}
+<div class="mb-4 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5">{{ econ_job_msg }}</div>
+{% endif %}
 
 <a href="javascript:history.back()" class="text-sm text-slate-500 hover:text-slate-800">← к списку</a>
 
 <div class="bg-white rounded-lg border border-slate-200 p-6 mt-3">
-  <h1 class="text-lg font-semibold leading-snug text-slate-900">{{ t.subject or '(без названия)' }}</h1>
+  <div class="flex items-start justify-between gap-3">
+    <h1 class="text-lg font-semibold leading-snug text-slate-900">{{ t.subject or '(без названия)' }}</h1>
+    <form action="/tender/{{ t.reestr_number }}/favorite" method="post" class="shrink-0"
+          title="{{ 'Убрать из избранного' if is_favorite else 'В избранное' }}">
+      <button class="text-2xl leading-none {{ 'text-amber-400 hover:text-amber-500' if is_favorite else 'text-slate-300 hover:text-amber-400' }}">{{ '★' if is_favorite else '☆' }}</button>
+    </form>
+  </div>
   <div class="text-sm text-slate-400 mt-1">
     № {{ t.reestr_number }} · {{ t.law or '—' }}
     {% if t.source == 'closed' %}
@@ -109,6 +118,130 @@
       {{ row('Регион', (t.region_code or '') ~ ' ' ~ (t.region_name or '')) }}
       {{ row('Место поставки', t.delivery_place or '—') }}
     </dl>
+  </div>
+</div>
+
+<!-- ИИ-экономист: RAG-рекомендация по цене и участию -->
+<div class="bg-white rounded-lg border border-slate-200 p-6 mt-4">
+  <div class="flex items-center justify-between gap-3 mb-3">
+    <h2 class="text-sm font-semibold text-slate-500">ИИ-экономист: рекомендация по кейсам бюро</h2>
+    {% if econ_job and econ_job.running and econ_job.reestr_number == t.reestr_number %}
+    <span class="text-indigo-600 text-xs font-medium inline-flex items-center gap-1">
+      <svg class="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"></path></svg>
+      Считаю экономику…
+    </span>
+    {% else %}
+    <form action="/tender/{{ t.reestr_number }}/economics" method="post"
+          onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Запускаю…';">
+      <button class="text-indigo-600 hover:text-indigo-800 text-xs font-medium disabled:opacity-60">{{ 'Пересчитать' if recommendation else 'Рассчитать экономику (ИИ)' }}</button>
+    </form>
+    {% endif %}
+  </div>
+
+  {% if recommendation %}
+  {% set rc = recommendation.recommendation %}
+  <div class="flex flex-wrap items-center gap-2 mb-3">
+    <span class="px-2.5 py-1 rounded-md text-xs font-medium border {{ 'bg-emerald-50 text-emerald-700 border-emerald-200' if rc.participate == 'да' else ('bg-red-50 text-red-700 border-red-200' if rc.participate == 'нет' else 'bg-amber-50 text-amber-800 border-amber-200') }}">участвовать: {{ rc.participate }}</span>
+    <span class="px-2.5 py-1 rounded-md text-xs border bg-slate-50 text-slate-600 border-slate-200">ожидаемое снижение: {{ rc.expected_reduction_min_pct }}–{{ rc.expected_reduction_max_pct }}%</span>
+    <span class="px-2.5 py-1 rounded-md text-xs border bg-slate-50 text-slate-600 border-slate-200">уверенность: {{ rc.confidence }}</span>
+    <span class="text-xs text-slate-400 ml-auto">{{ recommendation.created_at | date_ru(true) }} · кейсов в контексте: {{ rc.n_cases or 0 }}</span>
+  </div>
+  <p class="text-[15px] leading-7 text-slate-900 font-medium">{{ rc.recommended_bid }}</p>
+  <p class="text-[14px] leading-7 text-slate-600 mt-2">{{ rc.rationale }}</p>
+  {% if rc.risks %}
+  <ul class="mt-3 space-y-1">
+    {% for r in rc.risks %}
+    <li class="text-[13px] leading-6 text-amber-900 bg-amber-50 border border-amber-100 rounded-md px-2.5 py-1">⚠ {{ r }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if rc.data_notes %}<p class="text-xs text-slate-400 mt-3">Данные: {{ rc.data_notes }}</p>{% endif %}
+
+  <div class="mt-4 pt-3 border-t border-slate-100">
+    {% if rec_feedback %}
+    <div class="text-xs text-slate-400 mb-2">
+      Оценка бюро: {{ 'в точку' if rec_feedback[0].useful else 'мимо' }}{% if rec_feedback[0].comment %} — «{{ rec_feedback[0].comment }}»{% endif %}
+    </div>
+    {% endif %}
+    <form action="/tender/{{ t.reestr_number }}/recommendation/{{ recommendation.id }}/feedback" method="post"
+          class="flex flex-wrap items-center gap-2">
+      <input name="comment" placeholder="комментарий (важно для «мимо»)"
+             class="border border-slate-300 rounded-md px-2 py-1 text-xs flex-1 min-w-[200px]">
+      <button name="useful" value="1" class="text-xs px-2.5 py-1 rounded-md border border-emerald-300 text-emerald-700 hover:bg-emerald-50">в точку</button>
+      <button name="useful" value="0" class="text-xs px-2.5 py-1 rounded-md border border-red-300 text-red-700 hover:bg-red-50">мимо</button>
+    </form>
+  </div>
+  {% else %}
+  <p class="text-sm text-slate-400">Рекомендации ещё нет. ИИ соберёт похожие кейсы из истории бюро (участия, избранное, заметки), факты по сегменту — и предложит ценовую стратегию. Чем больше внесено исходов участия, тем точнее.</p>
+  {% endif %}
+
+  {% if econ_job and econ_job.running and econ_job.reestr_number == t.reestr_number %}
+  <script>
+  (function () {
+    var poll = setInterval(async function () {
+      try {
+        var r = await fetch('/tender/{{ t.reestr_number }}/economics-status', { headers: { 'Accept': 'application/json' } });
+        var s = await r.json();
+        if (!s.running) { clearInterval(poll); window.location.reload(); }
+      } catch (e) { /* сеть моргнула — повторим */ }
+    }, 3000);
+  })();
+  </script>
+  {% endif %}
+</div>
+
+<!-- Участие бюро + заметки: «человеческий» слой RAG -->
+<div class="grid md:grid-cols-2 gap-4 mt-4">
+  <div class="bg-white rounded-lg border border-slate-200 p-6">
+    <h2 class="text-sm font-semibold text-slate-500 mb-3">Участие бюро</h2>
+    <form action="/tender/{{ t.reestr_number }}/participation" method="post" class="space-y-2.5 text-sm">
+      <select name="status" class="w-full border border-slate-300 rounded-md px-2 py-1.5">
+        <option value="">— не участвуем —</option>
+        {% for code, label in status_labels.items() %}
+        <option value="{{ code }}" {{ 'selected' if participation and participation.status == code }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <div class="grid grid-cols-2 gap-2">
+        <input name="our_price" placeholder="наша цена, ₽" value="{{ participation.our_price if participation and participation.our_price is not none else '' }}"
+               class="border border-slate-300 rounded-md px-2 py-1.5">
+        <input name="winner_price" placeholder="цена победителя, ₽" value="{{ participation.winner_price if participation and participation.winner_price is not none else '' }}"
+               class="border border-slate-300 rounded-md px-2 py-1.5">
+      </div>
+      <input type="date" name="decided_at" value="{{ participation.decided_at.isoformat() if participation and participation.decided_at else '' }}"
+             class="w-full border border-slate-300 rounded-md px-2 py-1.5">
+      <textarea name="comment" rows="2" placeholder="комментарий к участию (почему выиграли/проиграли — попадёт в RAG)"
+                class="w-full border border-slate-300 rounded-md px-2 py-1.5">{{ participation.comment or '' if participation else '' }}</textarea>
+      <button class="bg-slate-900 text-white rounded-md px-3 py-1.5 text-sm hover:bg-slate-700">Сохранить участие</button>
+      {% if t.nmck and participation and participation.winner_price %}
+      <span class="text-xs text-slate-400 ml-2">снижение от НМЦ: {{ ((1 - participation.winner_price / t.nmck) * 100) | round(1) }}%</span>
+      {% endif %}
+    </form>
+  </div>
+  <div class="bg-white rounded-lg border border-slate-200 p-6">
+    <h2 class="text-sm font-semibold text-slate-500 mb-3">Заметки бюро</h2>
+    <form action="/tender/{{ t.reestr_number }}/notes" method="post" class="flex gap-2 mb-3">
+      <input name="text" required placeholder="знание, которого нет в полях — попадёт в промпт ИИ дословно"
+             class="flex-1 border border-slate-300 rounded-md px-2 py-1.5 text-sm">
+      <button class="bg-slate-100 border border-slate-300 rounded-md px-3 py-1.5 text-sm hover:bg-slate-200">Добавить</button>
+    </form>
+    {% if notes %}
+    <ul class="space-y-2">
+      {% for n in notes %}
+      <li class="flex items-start justify-between gap-2 bg-slate-50 border border-slate-100 rounded-md px-2.5 py-1.5">
+        <div>
+          <div class="text-[13px] leading-6 text-slate-700">{{ n.text }}</div>
+          <div class="text-[11px] text-slate-400">{{ n.created_at | date_ru(true) }}</div>
+        </div>
+        <form action="/tender/{{ t.reestr_number }}/notes/{{ n.id }}/delete" method="post"
+              onsubmit="return confirm('Удалить заметку?')">
+          <button class="text-slate-300 hover:text-red-600 text-xs">✕</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-xs text-slate-400">Заметок нет.</p>
+    {% endif %}
   </div>
 </div>
 

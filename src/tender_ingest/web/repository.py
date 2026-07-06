@@ -23,6 +23,8 @@ from tender_ingest.db.models import (
     IngestionRun,
     Tender,
     TenderDocument,
+    TenderFavorite,
+    TenderParticipation,
     TenderRelevance,
     TenderUpload,
 )
@@ -76,6 +78,8 @@ class TenderRow:
     decided_by: str | None
     summary: str | None
     red_flags: list[str] | None
+    is_favorite: bool = False
+    participation_status: str | None = None
 
 
 @dataclass
@@ -89,6 +93,7 @@ class Filters:
     nmck_min: Decimal | None = None
     nmck_max: Decimal | None = None
     upload: int | None = None  # id выгрузки (ingestion_runs.id) — переключение выгрузок
+    fav: bool = False  # только избранные
     sort: str = "score"
     page: int = 1
 
@@ -105,6 +110,7 @@ class Filters:
         nmck_min: str | None = None,
         nmck_max: str | None = None,
         upload: str | None = None,
+        fav: str | None = None,
         sort: str | None = None,
         page: str | None = None,
     ) -> Filters:
@@ -119,6 +125,7 @@ class Filters:
             nmck_min=_to_decimal(nmck_min),
             nmck_max=_to_decimal(nmck_max),
             upload=_to_int(upload),
+            fav=_flag(fav),
             sort=sort if sort in _SORTS else "score",
             page=max(1, _to_int(page) or 1),
         )
@@ -173,6 +180,8 @@ class WebRepository:
                     select(TenderUpload.reestr_number).where(TenderUpload.run_id == f.upload)
                 )
             )
+        if f.fav:
+            stmt = stmt.where(Tender.reestr_number.in_(select(TenderFavorite.reestr_number)))
         return stmt
 
     def _joined(self, *entities: Any) -> Select[Any]:
@@ -199,8 +208,35 @@ class WebRepository:
         stmt = self._apply_filters(self._joined(Tender, TenderRelevance), f)
         stmt = stmt.order_by(*self._order(f.sort)).limit(PAGE_SIZE).offset((f.page - 1) * PAGE_SIZE)
 
+        pairs = self.session.execute(stmt).all()
+        nums = [tender.reestr_number for tender, _ in pairs]
+        favs = (
+            set(
+                self.session.execute(
+                    select(TenderFavorite.reestr_number).where(
+                        TenderFavorite.reestr_number.in_(nums)
+                    )
+                ).scalars()
+            )
+            if nums
+            else set()
+        )
+        statuses: dict[str, str] = (
+            dict(
+                self.session.execute(
+                    select(TenderParticipation.reestr_number, TenderParticipation.status).where(
+                        TenderParticipation.reestr_number.in_(nums)
+                    )
+                )
+                .tuples()
+                .all()
+            )
+            if nums
+            else {}
+        )
+
         rows: list[TenderRow] = []
-        for tender, rel in self.session.execute(stmt).all():
+        for tender, rel in pairs:
             rows.append(
                 TenderRow(
                     reestr_number=tender.reestr_number,
@@ -217,6 +253,8 @@ class WebRepository:
                     decided_by=rel.decided_by if rel else None,
                     summary=rel.summary if rel else None,
                     red_flags=rel.red_flags if rel else None,
+                    is_favorite=tender.reestr_number in favs,
+                    participation_status=statuses.get(tender.reestr_number),
                 )
             )
         return rows, total
