@@ -184,6 +184,72 @@ class TenderDocument(Base):
     )
 
 
+class EconomicsProject(Base):
+    """Проект из таблицы «Экономика» — база знаний расчётов бюро.
+
+    Источник статистики долей по разделам для расчёта цены тендера. Повторный импорт
+    файла полностью заменяет содержимое (таблица — снимок одного workbook).
+    """
+
+    __tablename__ = "economics_projects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    sheet: Mapped[str] = mapped_column(String(16), nullable=False)  # work | preliminary
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    contract_total: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    contract_note: Mapped[str | None] = mapped_column(Text)  # напр. «(40% на ПД)»
+    cost_planned: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    cost_fact: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    profit: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    meta: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)
+    source_file: Mapped[str | None] = mapped_column(Text)
+    imported_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class EconomicsLine(Base):
+    """Строка расчёта проекта «Экономики»: раздел работ с долей/суммами и исполнителем."""
+
+    __tablename__ = "economics_lines"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("economics_projects.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    name_raw: Mapped[str] = mapped_column(Text, nullable=False)
+    canon: Mapped[str | None] = mapped_column(String(32), index=True)  # ключ canon.CATALOG
+    pct: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))  # колонка «%» из файла
+    planned: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    fact: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    fact_raw: Mapped[str | None] = mapped_column(Text)
+    comment: Mapped[str | None] = mapped_column(Text)
+    share: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))  # план / цена договора
+
+
+class TenderEconomics(Base):
+    """Расчёт экономики тендера (ИИ или правка человека). Append-only: показываем последний.
+
+    payload — весь расчёт целиком: база, строки, накладные, итоги, сетка понижения,
+    аналоги, предупреждения (структуру задаёт economics/engine.py).
+    """
+
+    __tablename__ = "tender_economics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    reestr_number: Mapped[str] = mapped_column(
+        Text, ForeignKey("tenders.reestr_number", ondelete="CASCADE"), index=True, nullable=False
+    )
+    created_by: Mapped[str] = mapped_column(String(8), nullable=False)  # ai | user
+    model: Mapped[str | None] = mapped_column(String(40))
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class DocumentAnalysis(Base):
     """Бриф по ТЗ от LLM (семантический разбор + цитаты). Append-only: показываем последний."""
 

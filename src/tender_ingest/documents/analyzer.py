@@ -21,6 +21,7 @@ from tender_ingest.config import Settings, get_settings
 from tender_ingest.documents.prompt import (
     BRIEF_SCHEMA,
     SYSTEM_PROMPT,
+    brief_schema_with_card,
     build_merge_message,
     build_message,
     build_pdf_message,
@@ -69,8 +70,13 @@ class DocumentAnalyzer:
     def model(self) -> str:
         return self._model
 
-    def _call(self, content: Any, label: str) -> dict[str, Any]:
-        """Один structured-запрос к Claude по BRIEF_SCHEMA (кэш системного промпта)."""
+    def _call(self, content: Any, label: str, extract_card: bool = False) -> dict[str, Any]:
+        """Один structured-запрос к Claude по BRIEF_SCHEMA (кэш системного промпта).
+
+        extract_card=True (закрытые тендеры) добавляет в схему объект card — поля
+        карточки, извлечённые из ТЗ; системный промпт не меняется (кэш сохраняется).
+        """
+        schema = brief_schema_with_card() if extract_card else BRIEF_SCHEMA
         resp = self._client.messages.create(
             model=self._model,
             max_tokens=_MAX_TOKENS,
@@ -78,7 +84,7 @@ class DocumentAnalyzer:
                 {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
             ],
             messages=[{"role": "user", "content": content}],
-            output_config={"format": {"type": "json_schema", "schema": BRIEF_SCHEMA}},
+            output_config={"format": {"type": "json_schema", "schema": schema}},
         )
         raw = "".join(getattr(block, "text", "") for block in resp.content)
         data: dict[str, Any] = json.loads(raw)
@@ -92,18 +98,25 @@ class DocumentAnalyzer:
         )
         return data
 
-    def analyze(self, text: str, context: str = "") -> dict[str, Any]:
+    def analyze(self, text: str, context: str = "", extract_card: bool = False) -> dict[str, Any]:
         """Разобрать ТЕКСТ ТЗ (из PDF с текстовым слоем / DOCX / XLSX) -> бриф по BRIEF_SCHEMA."""
-        return self._call(build_message(context, text), "document_analyzed")
+        return self._call(
+            build_message(context, text, extract_card), "document_analyzed", extract_card
+        )
 
-    def analyze_pdf(self, pdf_bytes: bytes, context: str = "") -> dict[str, Any]:
+    def analyze_pdf(
+        self, pdf_bytes: bytes, context: str = "", extract_card: bool = False
+    ) -> dict[str, Any]:
         """Разобрать СКАН-PDF нативным движком Claude (большой файл — по частям + слияние)."""
         chunks, pages, truncated = _split_pdf(pdf_bytes)
         briefs = [
-            self._analyze_pdf_chunk(chunk, context, i, len(chunks))
+            self._analyze_pdf_chunk(chunk, context, i, len(chunks), extract_card)
             for i, chunk in enumerate(chunks)
         ]
-        result = briefs[0] if len(briefs) == 1 else self._merge_briefs(briefs, context)
+        if len(briefs) == 1:
+            result = briefs[0]
+        else:
+            result = self._merge_briefs(briefs, context, extract_card)
         if truncated:
             findings = result.setdefault("findings", [])
             if isinstance(findings, list):
@@ -119,7 +132,7 @@ class DocumentAnalyzer:
         return result
 
     def _analyze_pdf_chunk(
-        self, pdf_bytes: bytes, context: str, idx: int, total: int
+        self, pdf_bytes: bytes, context: str, idx: int, total: int, extract_card: bool = False
     ) -> dict[str, Any]:
         note = f"(Часть {idx + 1} из {total} одного ТЗ.)" if total > 1 else ""
         b64 = base64.standard_b64encode(pdf_bytes).decode("ascii")
@@ -128,13 +141,19 @@ class DocumentAnalyzer:
                 "type": "document",
                 "source": {"type": "base64", "media_type": "application/pdf", "data": b64},
             },
-            {"type": "text", "text": build_pdf_message(context, note)},
+            {"type": "text", "text": build_pdf_message(context, note, extract_card)},
         ]
-        return self._call(content, "document_pdf_chunk_analyzed")
+        return self._call(content, "document_pdf_chunk_analyzed", extract_card)
 
-    def _merge_briefs(self, briefs: list[dict[str, Any]], context: str) -> dict[str, Any]:
+    def _merge_briefs(
+        self, briefs: list[dict[str, Any]], context: str, extract_card: bool = False
+    ) -> dict[str, Any]:
         briefs_json = [json.dumps(b, ensure_ascii=False) for b in briefs]
-        return self._call(build_merge_message(briefs_json, context), "document_briefs_merged")
+        return self._call(
+            build_merge_message(briefs_json, context, extract_card),
+            "document_briefs_merged",
+            extract_card,
+        )
 
 
 def create_document_analyzer(settings: Settings | None = None) -> DocumentAnalyzer:

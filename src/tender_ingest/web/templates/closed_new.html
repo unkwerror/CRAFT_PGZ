@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Добавить закрытый тендер{% endblock %}
+
+{% block content %}
+<a href="/" class="text-sm text-slate-500 hover:text-slate-800">← к списку</a>
+
+<div class="bg-white rounded-lg border border-slate-200 p-6 mt-3 max-w-2xl">
+  <h1 class="text-lg font-semibold text-slate-900 mb-1">Добавить закрытый тендер</h1>
+  <p class="text-sm text-slate-500 mb-4">
+    Закупка не с Контура (закрытый источник). Заполните что известно — остальное
+    (предмет, заказчик, НМЦК, регион, сроки) ИИ вытащит из ТЗ при разборе и подставит
+    в карточку. Ручной ввод всегда приоритетнее: ИИ заполняет только пустые поля.
+  </p>
+
+  {% if error %}
+  <div class="mb-4 text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg px-4 py-2.5">{{ error }}</div>
+  {% endif %}
+
+  <form action="/closed/new" method="post" enctype="multipart/form-data" class="space-y-4">
+    <div>
+      <label class="block text-xs font-semibold text-slate-500 mb-1">Номер (не обязательно)</label>
+      <input name="reestr_number" placeholder="пусто — сгенерируется CLOSED-{{ 2026 }}-0001"
+             class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm">
+      <p class="text-xs text-slate-400 mt-1">Если у закупки есть свой номер — впишите его.</p>
+    </div>
+    <div>
+      <label class="block text-xs font-semibold text-slate-500 mb-1">Название / предмет (не обязательно)</label>
+      <input name="subject" placeholder="ИИ возьмёт из ТЗ, если оставить пустым"
+             class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm">
+    </div>
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 mb-1">Цена (НМЦК), ₽ (не обязательно)</label>
+        <input name="nmck" placeholder="например 8 500 000"
+               class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm">
+        <p class="text-xs text-slate-400 mt-1">Без цены расчёт экономики недоступен. Если цена есть в ТЗ — ИИ подставит её сам (с цитатой).</p>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 mb-1">Дедлайн подачи (не обязательно)</label>
+        <input name="submission_deadline" type="date"
+               class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm">
+      </div>
+    </div>
+    <div>
+      <label class="block text-xs font-semibold text-slate-500 mb-1">Файл ТЗ (PDF, DOCX, XLSX)</label>
+      <input type="file" name="file"
+             class="text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-slate-900 file:text-white hover:file:bg-slate-700">
+      <p class="text-xs text-slate-400 mt-1">Если приложить сразу — разбор ТЗ запустится автоматически и ИИ заполнит карточку.</p>
+    </div>
+    <button class="bg-indigo-600 text-white rounded-md px-5 py-2 text-sm font-medium hover:bg-indigo-500">Создать тендер</button>
+  </form>
+</div>
+{% endblock %}

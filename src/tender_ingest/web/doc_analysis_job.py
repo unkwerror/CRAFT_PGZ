@@ -6,16 +6,24 @@
 
 Сессию БД держим короткой: забрали данные документа и контекст -> закрыли -> долгий
 вызов Claude без открытой транзакции -> открыли сессию только чтобы сохранить бриф.
+
+Закрытые тендеры (source='closed', карточки Контура нет): тот же разбор дополнительно
+извлекает поля карточки из ТЗ (объект card в брифе) — заполняются ТОЛЬКО пустые поля
+(ручной ввод приоритетен), после чего тендер встаёт в очередь скоринга.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import re
 import threading
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from typing import Any
 
 import structlog
 
+from tender_ingest.db.models import AnalysisQueue, Tender, TenderRelevance
 from tender_ingest.db.session import get_session_factory
 from tender_ingest.documents.analyzer import create_document_analyzer
 from tender_ingest.documents.extract import UnsupportedDocumentError, extract_text
@@ -23,6 +31,69 @@ from tender_ingest.documents.prompt import build_context
 from tender_ingest.web.repository import DocumentRepository, WebRepository
 
 log = structlog.get_logger()
+
+CLOSED_SOURCE = "closed"
+
+
+def _card_str(card: dict[str, Any], key: str) -> str | None:
+    value = str(card.get(key) or "").strip()
+    return value or None
+
+
+def fill_card_from_brief(session: Any, reestr_number: str, brief: dict[str, Any]) -> list[str]:
+    """Дозаполнить ПУСТЫЕ поля карточки закрытого тендера из brief['card'].
+
+    Возвращает список заполненных полей (для сообщения в UI). Ручной ввод не трогаем.
+    После заполнения тендер ставится в очередь скоринга (если ещё не оценён).
+    """
+    card = brief.get("card")
+    tender = session.get(Tender, reestr_number)
+    if tender is None or not isinstance(card, dict):
+        return []
+    filled: list[str] = []
+
+    def set_if_empty(attr: str, value: object, label: str) -> None:
+        if value is not None and getattr(tender, attr) in (None, ""):
+            setattr(tender, attr, value)
+            filled.append(label)
+
+    nmck_raw = card.get("nmck")
+    if nmck_raw is not None and tender.nmck is None:
+        try:
+            tender.nmck = Decimal(str(nmck_raw))
+            tender.currency = tender.currency or "RUB"
+            filled.append("НМЦК")
+        except InvalidOperation:
+            pass
+    set_if_empty("subject", _card_str(card, "subject"), "предмет")
+    set_if_empty("customer_name", _card_str(card, "customer_name"), "заказчик")
+    set_if_empty("customer_inn", _card_str(card, "customer_inn"), "ИНН")
+    set_if_empty("region_name", _card_str(card, "region_name"), "регион")
+    set_if_empty("delivery_place", _card_str(card, "delivery_place"), "место работ")
+    set_if_empty("law", _card_str(card, "law"), "закон")
+    set_if_empty("purchase_method", _card_str(card, "purchase_method"), "способ отбора")
+    set_if_empty("advance_raw", _card_str(card, "advance"), "аванс")
+    code = _card_str(card, "region_code")
+    if code and re.fullmatch(r"\d{2}", code) and tender.region_code in (None, ""):
+        tender.region_code = code
+    deadline = _card_str(card, "submission_deadline")
+    if deadline and tender.submission_deadline is None:
+        try:
+            tender.submission_deadline = dt.datetime.fromisoformat(deadline)
+            filled.append("дедлайн")
+        except ValueError:
+            pass
+
+    # Полный функционал как у контуровских: после заполнения карточки — в очередь скоринга.
+    has_relevance = session.get(TenderRelevance, reestr_number) is not None
+    if not has_relevance:
+        queue = session.get(AnalysisQueue, reestr_number)
+        if queue is None:
+            session.add(AnalysisQueue(reestr_number=reestr_number, status="pending"))
+        else:
+            queue.status = "pending"
+    session.commit()
+    return filled
 
 
 @dataclass(frozen=True)
@@ -86,22 +157,24 @@ class DocAnalysisJob:
                 found = WebRepository(session).get(reestr)
                 tender, relevance = found if found else (None, None)
                 context = build_context(tender, relevance) if tender is not None else ""
+                extract_card = tender is not None and tender.source == CLOSED_SOURCE
 
             # 2) извлечение + разбор (без открытой сессии — это минуты)
             extracted = extract_text(filename, content_type, data)
             analyzer = create_document_analyzer()
             if extracted.kind == "pdf" and extracted.low_text:
                 # скан без текстового слоя -> отдаём PDF Claude, он распознаёт сам
-                brief = analyzer.analyze_pdf(data, context)
+                brief = analyzer.analyze_pdf(data, context, extract_card)
                 pages, truncated = (extracted.pages or None), False
             elif extracted.text.strip():
-                brief = analyzer.analyze(extracted.text, context)
+                brief = analyzer.analyze(extracted.text, context, extract_card)
                 pages, truncated = (extracted.pages or None), extracted.truncated
             else:
                 self._finish("Файл пуст или не удалось извлечь содержимое")
                 return
 
-            # 3) короткая сессия: сохраняем бриф
+            # 3) короткая сессия: сохраняем бриф (+карточка закрытого тендера из ТЗ)
+            filled: list[str] = []
             with get_session_factory()() as session:
                 DocumentRepository(session).add_analysis(
                     doc_id,
@@ -111,7 +184,12 @@ class DocAnalysisJob:
                     pages=pages,
                     truncated=truncated,
                 )
-            self._finish(f"ТЗ разобрано: {filename}")
+                if extract_card:
+                    filled = fill_card_from_brief(session, reestr, brief)
+            message = f"ТЗ разобрано: {filename}"
+            if filled:
+                message += ". Карточка дополнена из ТЗ: " + ", ".join(filled)
+            self._finish(message)
         except UnsupportedDocumentError:
             self._finish("Разбор поддерживает только PDF, DOCX и XLSX")
         except ValueError as exc:

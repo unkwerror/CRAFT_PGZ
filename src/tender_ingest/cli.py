@@ -38,6 +38,32 @@ def ingest_cmd(file_: Path) -> None:
         raise click.ClickException("Прогон завершился с ошибкой — см. журнал ingestion_runs")
 
 
+@main.command("economics-import")
+@click.option(
+    "--file",
+    "file_",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Путь к .xlsx таблице «Экономика» (база знаний расчётов бюро)",
+)
+def economics_import_cmd(file_: Path) -> None:
+    """Импортировать таблицу «Экономика»: блоки проектов -> база знаний долей по разделам.
+
+    Повторный импорт полностью заменяет базу (снимок одного файла).
+    """
+    from tender_ingest.db.session import get_session_factory
+    from tender_ingest.economics.store import EconomicsStore
+    from tender_ingest.economics.xlsx import parse_workbook
+
+    projects = parse_workbook(file_)
+    with get_session_factory()() as session:
+        summary = EconomicsStore(session).replace_import(projects, file_.name)
+    click.echo(
+        f"projects={summary.projects} lines={summary.lines} "
+        f"without_canon={summary.lines_without_canon}"
+    )
+
+
 @main.command("score")
 @click.option("--limit", type=int, default=None, help="Сколько закупок из очереди оценить")
 def score_cmd(limit: int | None) -> None:

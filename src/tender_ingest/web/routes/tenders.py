@@ -9,7 +9,9 @@ from fastapi.responses import HTMLResponse
 
 from tender_ingest.db.session import get_session_factory
 from tender_ingest.documents.prompt import FIELD_LABELS
+from tender_ingest.economics.store import EconomicsStore
 from tender_ingest.web.doc_analysis_job import job as doc_analysis_job
+from tender_ingest.web.economics_job import job as economics_job
 from tender_ingest.web.repository import PAGE_SIZE, DocumentRepository, Filters, WebRepository
 from tender_ingest.web.scoring_job import job
 from tender_ingest.web.security import require_auth
@@ -93,6 +95,10 @@ def detail(request: Request, reestr_number: str, msg: str | None = None) -> HTML
         documents = docs_repo.list_for(reestr_number)
         analyses = docs_repo.latest_analyses_for(reestr_number)
 
+        eco_store = EconomicsStore(session)
+        economics = eco_store.latest_for(reestr_number)
+        kb_size = eco_store.knowledge_base_size()
+
         dj = doc_analysis_job.snapshot()
         doc_job_msg = None
         if (
@@ -102,6 +108,17 @@ def detail(request: Request, reestr_number: str, msg: str | None = None) -> HTML
             and (dt.datetime.now(dt.UTC) - dj.finished_at).total_seconds() < _FINISHED_BANNER_SEC
         ):
             doc_job_msg = dj.message
+
+        ej = economics_job.snapshot()
+        eco_job_msg = None
+        if (
+            not ej.running
+            and ej.message
+            and ej.reestr_number == reestr_number
+            and ej.finished_at is not None
+            and (dt.datetime.now(dt.UTC) - ej.finished_at).total_seconds() < _FINISHED_BANNER_SEC
+        ):
+            eco_job_msg = ej.message
         return templates.TemplateResponse(
             request,
             "tenders/detail.html",
@@ -114,5 +131,9 @@ def detail(request: Request, reestr_number: str, msg: str | None = None) -> HTML
                 "msg": msg,
                 "doc_job": dj,
                 "doc_job_msg": doc_job_msg,
+                "economics": economics,
+                "eco_kb_size": kb_size,
+                "eco_job": ej,
+                "eco_job_msg": eco_job_msg,
             },
         )

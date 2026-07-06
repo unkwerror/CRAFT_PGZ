@@ -47,6 +47,20 @@ SYSTEM_PROMPT = (
 - ЦИТИРУЙ каждый пункт: quote — точная выдержка из текста (можно 1–2 предложения), \
 page — номер страницы из маркера «===== стр. N =====» или название листа из \
 «===== лист: … =====» (для Excel), либо пусто, если ориентира нет.
+- Отдельно заполни work_breakdown — ПОЛНЫЙ состав работ для расчёта экономики \
+(по нему потом считается себестоимость и цена, поэтому он должен быть исчерпывающим \
+и строго по ТЗ). Каждая требуемая работа — ОТДЕЛЬНОЙ позицией, ничего не объединяй \
+и не добавляй от себя: разделы/подразделы ПД и РД (как они названы в ТЗ; подразделы \
+ИОС — каждый отдельно), каждый вид инженерных изысканий отдельно (ИГДИ, ИГИ, ИЭИ, \
+ИГМИ и т.п.), обследования/обмеры/3D-сканирование, работы по ОКН (ИХТИ, ИАБИ, КНИ, \
+ГИКЭ, предмет охраны и пр.), сметная документация, демонтаж/ПОД, согласования и \
+получение ТУ, экспертизы (какие и за чей счёт), BIM/ТИМ, авторский надзор, дизайн и \
+визуализация. Для каждой позиции: name — название как в ТЗ; kind — категория \
+(design — раздел ПД/РД, survey — изыскания/обследования, heritage — работы по ОКН, \
+expertise — экспертиза/согласование, other — прочее); stage — стадия (ПД, РД, ПД+РД, \
+ЭП, НПД или «не указано»); detail — объём и состав по ТЗ (числа, единицы, условия); \
+quote и page — как везде. Если состав работ в ТЗ не расписан — верни пустой массив, \
+не выдумывай.
 - Пиши на русском, развёрнуто и структурно.
 
 ОБЯЗАТЕЛЬНЫЕ ПОЛЯ (value/quote/page для каждого) — заполняй подробно:
@@ -101,6 +115,25 @@ BRIEF_SCHEMA: dict[str, Any] = {
                 "additionalProperties": False,
             },
         },
+        "work_breakdown": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "kind": {
+                        "type": "string",
+                        "enum": ["design", "survey", "heritage", "expertise", "other"],
+                    },
+                    "stage": {"type": "string"},
+                    "detail": {"type": "string"},
+                    "quote": {"type": "string"},
+                    "page": {"type": "string"},
+                },
+                "required": ["name", "kind", "stage", "detail", "quote", "page"],
+                "additionalProperties": False,
+            },
+        },
     },
     "required": [
         "summary",
@@ -112,9 +145,59 @@ BRIEF_SCHEMA: dict[str, Any] = {
         "expertise",
         "bim",
         "findings",
+        "work_breakdown",
     ],
     "additionalProperties": False,
 }
+
+# --- Закрытые тендеры: карточки Контура нет, ИИ извлекает её поля из ТЗ ---
+
+_CARD_PROPERTIES: dict[str, Any] = {
+    "subject": {"type": "string"},
+    "nmck": {"type": ["number", "null"]},
+    "nmck_quote": {"type": "string"},
+    "customer_name": {"type": "string"},
+    "customer_inn": {"type": "string"},
+    "region_code": {"type": "string"},
+    "region_name": {"type": "string"},
+    "delivery_place": {"type": "string"},
+    "submission_deadline": {"type": "string"},
+    "law": {"type": "string"},
+    "purchase_method": {"type": "string"},
+    "advance": {"type": "string"},
+}
+
+CARD_INSTRUCTION = (
+    "\n\nДОПОЛНИТЕЛЬНО (закрытая закупка, карточки нет): заполни объект card — поля "
+    "карточки тендера, извлечённые из ТЗ. subject — предмет закупки одной строкой; "
+    "nmck — НМЦК/цена договора В РУБЛЯХ числом, ТОЛЬКО если цена явно указана в "
+    "документе (иначе null), nmck_quote — цитата с ценой; customer_name/customer_inn — "
+    "заказчик и его ИНН; region_code — код региона РФ (2 цифры, если определим) и "
+    "region_name — название региона/города; delivery_place — место выполнения работ; "
+    "submission_deadline — срок подачи заявок в формате YYYY-MM-DD (пусто, если нет); "
+    "law — 44-ФЗ/223-ФЗ/Коммерческие/615 ПП, если понятно; purchase_method — способ "
+    "отбора; advance — условия аванса. Чего в ТЗ нет — пустая строка (или null для "
+    "nmck), НЕ выдумывай."
+)
+
+
+def brief_schema_with_card() -> dict[str, Any]:
+    """BRIEF_SCHEMA + объект card (для закрытых тендеров без карточки Контура)."""
+    schema = {
+        **BRIEF_SCHEMA,
+        "properties": {
+            **BRIEF_SCHEMA["properties"],
+            "card": {
+                "type": "object",
+                "properties": _CARD_PROPERTIES,
+                "required": list(_CARD_PROPERTIES),
+                "additionalProperties": False,
+            },
+        },
+        "required": [*BRIEF_SCHEMA["required"], "card"],
+    }
+    return schema
+
 
 # Порядок и подписи обязательных полей для отрисовки брифа.
 FIELD_LABELS: list[tuple[str, str]] = [
@@ -143,32 +226,40 @@ def build_context(tender: Any, relevance: Any | None) -> str:
     return "\n".join(lines)
 
 
-def build_message(context: str, text: str) -> str:
-    return (
+def build_message(context: str, text: str, extract_card: bool = False) -> str:
+    head = (
         "Ниже — карточка закупки с быстрым скорингом и извлечённый текст ТЗ (с маркерами "
         "страниц). Разбери ТЗ по смыслу с учётом этого контекста и верни бриф со всеми "
-        "полезными данными и цитатами.\n\n" + context + "\n\n=== ТЕКСТ ТЗ ===\n" + text
+        "полезными данными и цитатами."
     )
+    if extract_card:
+        head += CARD_INSTRUCTION
+    return head + "\n\n" + context + "\n\n=== ТЕКСТ ТЗ ===\n" + text
 
 
-def build_pdf_message(context: str, part_note: str = "") -> str:
+def build_pdf_message(context: str, part_note: str = "", extract_card: bool = False) -> str:
     """Сообщение к приложенному PDF-скану: Claude сам распознаёт документ своим движком."""
     head = (
         "К сообщению приложен PDF — это СКАН ТЗ (текстового слоя нет). Распознай его "
         "СВОИМ движком и разбери по смыслу, верни бриф с цитатами (page — номер страницы). "
     )
     note = f"{part_note} " if part_note else ""
-    return head + note + "Контекст закупки ниже.\n\n" + context
+    tail = CARD_INSTRUCTION + "\n\n" if extract_card else ""
+    return head + note + "Контекст закупки ниже.\n\n" + tail + context
 
 
-def build_merge_message(briefs_json: list[str], context: str) -> str:
+def build_merge_message(briefs_json: list[str], context: str, extract_card: bool = False) -> str:
     """Сообщение для слияния брифов по последовательным частям одного ТЗ в один итоговый."""
     parts = "\n\n".join(f"--- ЧАСТЬ {i + 1} ---\n{b}" for i, b in enumerate(briefs_json))
+    card_note = (
+        " Объект card тоже объедини: непустые значения приоритетнее пустых." if extract_card else ""
+    )
     return (
         "Ниже — брифы по ПОСЛЕДОВАТЕЛЬНЫМ частям ОДНОГО ТЗ (документ разбит на части "
         "по объёму). Объедини их в ОДИН итоговый бриф по той же схеме: для обязательных "
         "полей возьми наиболее содержательное непустое значение и сохрани его цитату и "
-        "страницу; findings объедини, убрав дубли; summary — цельный по всему ТЗ.\n\n"
+        "страницу; findings и work_breakdown объедини, убрав дубли (в work_breakdown "
+        f"каждая работа — один раз); summary — цельный по всему ТЗ.{card_note}\n\n"
         + context
         + "\n\n"
         + parts

@@ -1,0 +1,178 @@
+"""ИИ-ревью готового расчёта экономики: оценка реальности + открытые источники.
+
+Запускается ПОСЛЕ детерминированного расчёта (engine). Модель с веб-поиском смотрит
+на готовую таблицу и оценивает: какие строки занижены/завышены относительно рынка
+(изыскания, субподряд, экспертизы), чего в расчёте не хватает, какая цена подачи
+реалистична. Рекомендации НИЧЕГО не меняют в расчёте сами — они сохраняются в
+payload['review'] и применяются только явной кнопкой (через engine.apply_edits).
+
+Ответ модели — JSON в тексте (веб-поиск и structured output вместе ненадёжны),
+парсим устойчиво; сломался парс — сохраняем сырой текст, расчёт не страдает.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+import anthropic
+import structlog
+
+from tender_ingest.config import Settings, get_settings
+
+log = structlog.get_logger()
+
+_MAX_TOKENS = 8000
+_MAX_WEB_SEARCHES = 6
+
+REVIEW_SYSTEM = """Ты — независимый аудитор экономики проектного бюро «КРАФТ ГРУПП» \
+(архитектурное проектирование: ПД/РД, благоустройство, ОКН; регионы УрФО и Тюменская \
+область). Тебе дают ГОТОВЫЙ расчёт себестоимости тендера, посчитанный алгоритмом по \
+медианным долям из прошлых проектов бюро.
+
+ЗАДАЧА: оценить, насколько расчёт реален, опираясь И на данные бюро, И на ОТКРЫТЫЕ \
+ИСТОЧНИКИ (веб-поиск): рыночные расценки на инженерные изыскания, разделы ПД, \
+обследования, экспертизу, субподряд по РФ в текущих ценах. Где расходы занижены — \
+скажи прямо и предложи сколько реально; где завышены и можно сэкономить — тоже. \
+Ничего не подгоняй под «красивый» итог: если участие невыгодно — так и пиши.
+
+ПРАВИЛА:
+- Каждую рекомендацию обосновывай: цифра из открытого источника (укажи источник/URL) \
+или логика из данных тендера. Без основания — не предлагай.
+- suggested_amount указывай ТОЛЬКО когда уверен в конкретной сумме (₽); иначе null и \
+assessment='verify' (проверить вручную).
+- Строки «нет данных» — постарайся оценить по рынку (это самое ценное).
+- Учитывай регион, масштаб объекта и сроки из карточки.
+
+ОТВЕТ — СТРОГО один JSON-объект без пояснений вокруг, схема:
+{
+ "overall": {"verdict": "realistic"|"optimistic"|"understated",
+             "summary": "3–6 предложений: общий вывод о реальности расчёта"},
+ "adjustments": [{"key": "l0"|"o1"|…(ключ строки из расчёта),
+                  "name": "название строки",
+                  "assessment": "ok"|"increase"|"decrease"|"verify",
+                  "suggested_amount": число ₽ или null,
+                  "reasoning": "почему, с цифрами",
+                  "source": "URL или название источника, пусто если из данных бюро"}],
+ "missing_costs": [{"name": "чего не хватает в расчёте", "estimate": число ₽ или null,
+                    "reasoning": "...", "source": "..."}],
+ "market_notes": [{"note": "рыночный ориентир с цифрами", "source": "URL/название"}],
+ "suggested_price": {"price": число ₽ или null,
+                     "rationale": "обоснование рекомендованной цены подачи"}
+}"""
+
+
+def _payload_digest(payload: dict[str, Any]) -> str:
+    """Компактное текстовое представление расчёта для ревью."""
+    base = payload["base"]
+    totals = payload["totals"]
+    lines = []
+    for prefix, bucket in (("l", payload["lines"]), ("o", payload["overheads"])):
+        for i, line in enumerate(bucket):
+            amount = "НЕТ ДАННЫХ"
+            if line.get("amount"):
+                amount = f"{line['amount']:,.0f} ₽".replace(",", " ")
+            share = f"{line['share_pct']}%" if line.get("share_pct") is not None else "—"
+            lines.append(
+                f"[{prefix}{i}] {line['name']} | доля {share} | {amount} | "
+                f"источник: {line.get('source')} | {line.get('note') or ''}"
+            )
+    scenarios = "; ".join(
+        f"-{s['reduction_pct']}% -> прибыль {s['profit']:,.0f} ₽".replace(",", " ")
+        for s in payload.get("scenarios", [])
+    )
+    analogs = "; ".join(str(a["title"]) for a in payload.get("analogs", []))
+    return (
+        f"НМЦК (база): {base['nmck']:,.0f} ₽\n".replace(",", " ")
+        + "СТРОКИ РАСЧЁТА (ключ | название | доля | сумма | источник):\n"
+        + "\n".join(lines)
+        + f"\nИТОГО себестоимость: {totals['cost']:,.0f} ₽; ".replace(",", " ")
+        + (
+            f"прибыль при НМЦК: {totals['profit_at_nmck']:,.0f} ₽ ({totals['margin_pct']}%)\n"
+        ).replace(",", " ")
+        + f"Сетка понижения: {scenarios}\n"
+        + f"Мин. цена (маржа {payload['min_price']['min_margin_pct']}%): "
+        + f"{payload['min_price']['price']:,.0f} ₽\n".replace(",", " ")
+        + f"Проекты-аналоги: {analogs}\n"
+        + "Предупреждения: "
+        + "; ".join(payload.get("warnings", []))
+    )
+
+
+def _extract_json(text: str) -> dict[str, Any] | None:
+    """Достать первый JSON-объект из текста ответа (модель может добавить обвязку)."""
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match is None:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+class EconomicsReviewer:
+    def __init__(self, api_key: str, model: str) -> None:
+        self._client = anthropic.Anthropic(api_key=api_key)
+        self._model = model
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    def review(
+        self, *, payload: dict[str, Any], card_context: str, brief: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Оценка реальности расчёта. Возвращает объект review (см. схему в промпте).
+
+        brief передаётся ЦЕЛИКОМ (все поля, findings, work_breakdown с цитатами из ТЗ) —
+        ревью опирается на всё, что вытащено из документации, а не только на резюме.
+        """
+        message = (
+            "Оцени реальность расчёта экономики тендера. Используй веб-поиск для рыночных "
+            "расценок (изыскания, разделы ПД, обследования, экспертиза, субподряд, РФ, "
+            "текущий год) И полный бриф по ТЗ ниже (площади, объёмы, сроки, особые условия "
+            "— всё влияет на стоимость). Верни ТОЛЬКО JSON по схеме.\n\n"
+            "=== КАРТОЧКА ЗАКУПКИ (со скорингом) ===\n" + card_context + "\n\n"
+            "=== ПОЛНЫЙ БРИФ ПО ТЗ (всё, что вытащено из документации, с цитатами) ===\n"
+            + json.dumps(brief, ensure_ascii=False)
+            + "\n\n"
+            "=== РАСЧЁТ АЛГОРИТМА ===\n" + _payload_digest(payload)
+        )
+        resp = self._client.messages.create(
+            model=self._model,
+            max_tokens=_MAX_TOKENS,
+            system=[
+                {"type": "text", "text": REVIEW_SYSTEM, "cache_control": {"type": "ephemeral"}}
+            ],
+            messages=[{"role": "user", "content": message}],
+            tools=[
+                {
+                    "type": "web_search_20250305",
+                    "name": "web_search",
+                    "max_uses": _MAX_WEB_SEARCHES,
+                }
+            ],
+        )
+        text = "".join(getattr(block, "text", "") for block in resp.content)
+        usage = resp.usage
+        log.info(
+            "economics_reviewed",
+            model=self._model,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+        )
+        review = _extract_json(text)
+        if review is None:
+            # Парс не удался — сохраняем сырой текст, чтобы не потерять анализ.
+            return {"overall": {"verdict": "verify", "summary": text[:4000]}, "adjustments": []}
+        review.setdefault("adjustments", [])
+        return review
+
+
+def create_economics_reviewer(settings: Settings | None = None) -> EconomicsReviewer:
+    cfg = settings or get_settings()
+    if not cfg.anthropic_api_key:
+        raise ValueError("Нужен ANTHROPIC_API_KEY для ИИ-ревью экономики")
+    return EconomicsReviewer(api_key=cfg.anthropic_api_key, model=cfg.claude_model)
