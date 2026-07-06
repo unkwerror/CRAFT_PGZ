@@ -61,7 +61,13 @@ freelance_check, reserve. Выбирай ВНУТРИ исторического
 проектирование (например СМР + ПД, или на ПД отводится доля цены) — mode="pd_share" и \
 pd_share_pct (доля цены на проектные работы, в процентах) с цитатой; иначе mode="full". \
 Не выдумывай долю без основания в тексте.
-5. comments — 2–4 предложения: главные экономические риски тендера и что стоит \
+5. object_kind — тип объекта: building (здание/сооружение ЖГС), landscaping \
+(благоустройство/парк/сквер/трассы), heritage (ОКН/реставрация), linear (линейный \
+объект/сети), other. Для building алгоритм дополнительно использует нормативные веса \
+СБЦП по разделам без аналогов.
+6. design_stage — стадия по ТЗ: pd (только проектная документация), rd (только \
+рабочая), pd_rd (обе или не ясно).
+7. comments — 2–4 предложения: главные экономические риски тендера и что стоит \
 уточнить вручную (разделы без аналогов, нестандартные работы, изыскания).
 
 Отвечай на русском. Не выдумывай данных, которых нет во входе."""
@@ -122,9 +128,22 @@ def _proposal_schema() -> dict[str, Any]:
                 "required": ["mode", "pd_share_pct", "rationale", "quote"],
                 "additionalProperties": False,
             },
+            "object_kind": {
+                "type": "string",
+                "enum": ["building", "landscaping", "heritage", "linear", "other"],
+            },
+            "design_stage": {"type": "string", "enum": ["pd", "rd", "pd_rd"]},
             "comments": {"type": "string"},
         },
-        "required": ["analogs", "sections", "overheads", "base", "comments"],
+        "required": [
+            "analogs",
+            "sections",
+            "overheads",
+            "base",
+            "object_kind",
+            "design_stage",
+            "comments",
+        ],
         "additionalProperties": False,
     }
 
@@ -140,6 +159,8 @@ class Proposal:
     analog_ids: list[int]
     analog_reasons: dict[int, str]
     comments: str
+    object_kind: str = "other"
+    design_stage: str = "pd_rd"
 
 
 def _project_line(project: AnalogProject) -> str:
@@ -268,6 +289,8 @@ def _parse_proposal(data: dict[str, Any], nmck: float) -> Proposal:
         analog_ids=list(known_ids),
         analog_reasons=known_ids,
         comments=str(data.get("comments", "")),
+        object_kind=str(data.get("object_kind", "other")),
+        design_stage=str(data.get("design_stage", "pd_rd")),
     )
 
 

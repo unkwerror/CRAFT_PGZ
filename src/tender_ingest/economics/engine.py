@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tender_ingest.economics.canon import CATALOG_BY_KEY
+from tender_ingest.economics.sbcp import SBCP_SOURCE, sbcp_weights, stage_label
 from tender_ingest.economics.store import AnalogProject
 
 # Накладные строки бюро, присутствующие почти в каждом расчёте «Экономики».
@@ -118,6 +119,59 @@ def _clamp(value: float, bounds: tuple[float, float]) -> float:
     return max(bounds[0], min(bounds[1], value))
 
 
+def _apply_sbcp_fallback(
+    lines: list[dict[str, Any]],
+    *,
+    nmck: float,
+    object_kind: str,
+    design_stage: str,
+    warnings: list[str],
+) -> None:
+    """Второй источник долей: нормативные веса СБЦП для разделов без аналогов.
+
+    Веса СБЦП относительные, поэтому приводятся к уровню затрат бюро коэффициентом
+    k = медиана(доля_по_аналогам / вес_СБЦП) по разделам-«якорям» этого же расчёта
+    (есть и аналог, и нормативный вес). Якорей меньше двух — фолбэк не применяется,
+    разделы честно остаются no_data (никакой подгонки).
+    Справочник покрывает здания (ЖГС) — только object_kind='building'.
+    """
+    if object_kind != "building":
+        return
+    weights = sbcp_weights(design_stage)
+    targets = [
+        line for line in lines if line["source"] == "no_data" and line.get("canon") in weights
+    ]
+    if not targets:
+        return
+    anchors = [
+        (line["share_pct"] / 100.0, weights[canon])
+        for line in lines
+        if line["source"] == "analog" and (canon := line.get("canon")) in weights
+    ]
+    if len(anchors) < 2:
+        warnings.append(
+            "СБЦП не применён: мало разделов-якорей (нужно ≥2 раздела, у которых есть "
+            "и аналоги бюро, и нормативный вес) — разделы без данных оценивайте вручную."
+        )
+        return
+    k = statistics.median(share / weight for share, weight in anchors)
+    for line in targets:
+        share = weights[str(line["canon"])] * k
+        extra = f" · {line['note']}" if line.get("note") else ""
+        line.update(
+            {
+                "share_pct": round(share * 100, 2),
+                "amount": _round2(share * nmck),
+                "source": "sbcp",
+                "n_analogs": 0,
+                "note": (
+                    f"вес по СБЦП (стадия {stage_label(design_stage)}), приведён к уровню "
+                    f"затрат бюро (k по {len(anchors)} разделам-якорям). {SBCP_SOURCE}{extra}"
+                ),
+            }
+        )
+
+
 def build_payload(
     *,
     base: BaseInput,
@@ -128,8 +182,10 @@ def build_payload(
     analog_reasons: dict[int, str] | None = None,
     params: Params | None = None,
     comments: str = "",
+    object_kind: str = "other",
+    design_stage: str = "pd_rd",
 ) -> dict[str, Any]:
-    """Собрать расчёт: строки по разделам ТЗ (медианы аналогов) + накладные + итоги."""
+    """Собрать расчёт: строки по разделам ТЗ (медианы аналогов, фолбэк СБЦП) + накладные."""
     p = params or Params()
     ranges = overhead_history_ranges(all_projects)
     reasons = analog_reasons or {}
@@ -175,6 +231,14 @@ def build_payload(
                     covered_overheads.add(canon)
         lines.append(entry)
 
+    _apply_sbcp_fallback(
+        lines,
+        nmck=base.nmck,
+        object_kind=object_kind,
+        design_stage=design_stage,
+        warnings=warnings,
+    )
+
     overhead_lines: list[dict[str, Any]] = []
     for overhead in overheads:
         if overhead.canon not in OVERHEAD_KEYS or overhead.canon in covered_overheads:
@@ -210,6 +274,8 @@ def build_payload(
             "pd_share_pct": base.pd_share_pct,
             "rationale": base.rationale,
             "quote": base.quote,
+            "object_kind": object_kind,
+            "design_stage": design_stage,
         },
         "params": {"min_margin_pct": p.min_margin_pct, "reductions": list(p.reductions)},
         "lines": lines,

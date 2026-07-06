@@ -124,6 +124,8 @@ def calculate_economics(reestr_number: str, *, deep: bool = False) -> dict[str, 
         analog_reasons=proposal.analog_reasons,
         params=Params(),
         comments=proposal.comments,
+        object_kind=proposal.object_kind,
+        design_stage=proposal.design_stage,
     )
     if deep_warning:
         payload["warnings_static"] = [deep_warning, *payload.get("warnings_static", [])]

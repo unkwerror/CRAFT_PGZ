@@ -1,8 +1,6 @@
-"""«Человеческий» слой данных: избранное, участие в торгах, заметки, рекомендации ИИ.
+"""«Человеческий» слой данных: избранное, участие в торгах, заметки.
 
-Это корпус RAG для ИИ-экономиста (docs/analytics-brief.md): всё, что бюро вводит
-из веба, немедленно доступно отбору кейсов — переиндексация не нужна, кейсы
-собираются SQL-ом в момент запроса.
+Всё, что бюро вводит из веба; участие и исходы торгов питают дашборд аналитики.
 """
 
 from __future__ import annotations
@@ -16,8 +14,6 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from tender_ingest.db.models import (
-    AiRecommendation,
-    RecommendationFeedback,
     TenderFavorite,
     TenderNote,
     TenderParticipation,
@@ -128,56 +124,3 @@ class TrackingRepository:
             )
         )
         self.session.commit()
-
-    # --- рекомендации ИИ-экономиста ---
-
-    def latest_recommendation(self, reestr_number: str) -> AiRecommendation | None:
-        return self.session.execute(
-            select(AiRecommendation)
-            .where(AiRecommendation.reestr_number == reestr_number)
-            .order_by(AiRecommendation.created_at.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-
-    def add_recommendation(
-        self, reestr_number: str, *, model: str, recommendation: dict[str, object]
-    ) -> None:
-        self.session.add(
-            AiRecommendation(
-                reestr_number=reestr_number, model=model, recommendation=recommendation
-            )
-        )
-        self.session.commit()
-
-    def feedback_for(self, recommendation_id: int) -> Sequence[RecommendationFeedback]:
-        return (
-            self.session.execute(
-                select(RecommendationFeedback)
-                .where(RecommendationFeedback.recommendation_id == recommendation_id)
-                .order_by(RecommendationFeedback.created_at.desc())
-            )
-            .scalars()
-            .all()
-        )
-
-    def add_feedback(self, recommendation_id: int, *, useful: bool, comment: str | None) -> None:
-        self.session.add(
-            RecommendationFeedback(
-                recommendation_id=recommendation_id, useful=useful, comment=comment
-            )
-        )
-        self.session.commit()
-
-    def recent_misses(self, limit: int = 3) -> list[tuple[AiRecommendation, str | None]]:
-        """Последние рекомендации с фидбеком «мимо» — контрпримеры для калибровки промпта."""
-        rows = self.session.execute(
-            select(AiRecommendation, RecommendationFeedback.comment)
-            .join(
-                RecommendationFeedback,
-                RecommendationFeedback.recommendation_id == AiRecommendation.id,
-            )
-            .where(RecommendationFeedback.useful.is_(False))
-            .order_by(RecommendationFeedback.created_at.desc())
-            .limit(limit)
-        ).all()
-        return [(rec, comment) for rec, comment in rows]

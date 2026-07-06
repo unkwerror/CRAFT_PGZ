@@ -321,38 +321,3 @@ class TenderNote(Base):
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-
-
-class AiRecommendation(Base):
-    """Рекомендация ИИ-экономиста по закупке (RAG). Append-only: показываем последнюю."""
-
-    __tablename__ = "ai_recommendations"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    reestr_number: Mapped[str] = mapped_column(
-        Text, ForeignKey("tenders.reestr_number", ondelete="CASCADE"), index=True, nullable=False
-    )
-    model: Mapped[str] = mapped_column(String(40), nullable=False)
-    recommendation: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-
-
-class RecommendationFeedback(Base):
-    """Оценка рекомендации пользователем («в точку»/«мимо»). Промахи -> контрпримеры в промпт."""
-
-    __tablename__ = "recommendation_feedback"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    recommendation_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("ai_recommendations.id", ondelete="CASCADE"),
-        index=True,
-        nullable=False,
-    )
-    useful: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    comment: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )

@@ -19,9 +19,6 @@
 {% if eco_job_msg %}
 <div class="mb-4 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5">{{ eco_job_msg }}</div>
 {% endif %}
-{% if econ_job_msg %}
-<div class="mb-4 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5">{{ econ_job_msg }}</div>
-{% endif %}
 
 <a href="javascript:history.back()" class="text-sm text-slate-500 hover:text-slate-800">← к списку</a>
 
@@ -119,75 +116,6 @@
       {{ row('Место поставки', t.delivery_place or '—') }}
     </dl>
   </div>
-</div>
-
-<!-- ИИ-экономист: RAG-рекомендация по цене и участию -->
-<div class="bg-white rounded-lg border border-slate-200 p-6 mt-4">
-  <div class="flex items-center justify-between gap-3 mb-3">
-    <h2 class="text-sm font-semibold text-slate-500">ИИ-экономист: рекомендация по кейсам бюро</h2>
-    {% if econ_job and econ_job.running and econ_job.reestr_number == t.reestr_number %}
-    <span class="text-indigo-600 text-xs font-medium inline-flex items-center gap-1">
-      <svg class="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"></path></svg>
-      Считаю экономику…
-    </span>
-    {% else %}
-    <form action="/tender/{{ t.reestr_number }}/economics" method="post"
-          onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Запускаю…';">
-      <button class="text-indigo-600 hover:text-indigo-800 text-xs font-medium disabled:opacity-60">{{ 'Пересчитать' if recommendation else 'Рассчитать экономику (ИИ)' }}</button>
-    </form>
-    {% endif %}
-  </div>
-
-  {% if recommendation %}
-  {% set rc = recommendation.recommendation %}
-  <div class="flex flex-wrap items-center gap-2 mb-3">
-    <span class="px-2.5 py-1 rounded-md text-xs font-medium border {{ 'bg-emerald-50 text-emerald-700 border-emerald-200' if rc.participate == 'да' else ('bg-red-50 text-red-700 border-red-200' if rc.participate == 'нет' else 'bg-amber-50 text-amber-800 border-amber-200') }}">участвовать: {{ rc.participate }}</span>
-    <span class="px-2.5 py-1 rounded-md text-xs border bg-slate-50 text-slate-600 border-slate-200">ожидаемое снижение: {{ rc.expected_reduction_min_pct }}–{{ rc.expected_reduction_max_pct }}%</span>
-    <span class="px-2.5 py-1 rounded-md text-xs border bg-slate-50 text-slate-600 border-slate-200">уверенность: {{ rc.confidence }}</span>
-    <span class="text-xs text-slate-400 ml-auto">{{ recommendation.created_at | date_ru(true) }} · кейсов в контексте: {{ rc.n_cases or 0 }}</span>
-  </div>
-  <p class="text-[15px] leading-7 text-slate-900 font-medium">{{ rc.recommended_bid }}</p>
-  <p class="text-[14px] leading-7 text-slate-600 mt-2">{{ rc.rationale }}</p>
-  {% if rc.risks %}
-  <ul class="mt-3 space-y-1">
-    {% for r in rc.risks %}
-    <li class="text-[13px] leading-6 text-amber-900 bg-amber-50 border border-amber-100 rounded-md px-2.5 py-1">⚠ {{ r }}</li>
-    {% endfor %}
-  </ul>
-  {% endif %}
-  {% if rc.data_notes %}<p class="text-xs text-slate-400 mt-3">Данные: {{ rc.data_notes }}</p>{% endif %}
-
-  <div class="mt-4 pt-3 border-t border-slate-100">
-    {% if rec_feedback %}
-    <div class="text-xs text-slate-400 mb-2">
-      Оценка бюро: {{ 'в точку' if rec_feedback[0].useful else 'мимо' }}{% if rec_feedback[0].comment %} — «{{ rec_feedback[0].comment }}»{% endif %}
-    </div>
-    {% endif %}
-    <form action="/tender/{{ t.reestr_number }}/recommendation/{{ recommendation.id }}/feedback" method="post"
-          class="flex flex-wrap items-center gap-2">
-      <input name="comment" placeholder="комментарий (важно для «мимо»)"
-             class="border border-slate-300 rounded-md px-2 py-1 text-xs flex-1 min-w-[200px]">
-      <button name="useful" value="1" class="text-xs px-2.5 py-1 rounded-md border border-emerald-300 text-emerald-700 hover:bg-emerald-50">в точку</button>
-      <button name="useful" value="0" class="text-xs px-2.5 py-1 rounded-md border border-red-300 text-red-700 hover:bg-red-50">мимо</button>
-    </form>
-  </div>
-  {% else %}
-  <p class="text-sm text-slate-400">Рекомендации ещё нет. ИИ соберёт похожие кейсы из истории бюро (участия, избранное, заметки), факты по сегменту — и предложит ценовую стратегию. Чем больше внесено исходов участия, тем точнее.</p>
-  {% endif %}
-
-  {% if econ_job and econ_job.running and econ_job.reestr_number == t.reestr_number %}
-  <script>
-  (function () {
-    var poll = setInterval(async function () {
-      try {
-        var r = await fetch('/tender/{{ t.reestr_number }}/economics-status', { headers: { 'Accept': 'application/json' } });
-        var s = await r.json();
-        if (!s.running) { clearInterval(poll); window.location.reload(); }
-      } catch (e) { /* сеть моргнула — повторим */ }
-    }, 3000);
-  })();
-  </script>
-  {% endif %}
 </div>
 
 <!-- Участие бюро + заметки: «человеческий» слой RAG -->
@@ -409,6 +337,8 @@
     {% if pl.deep %} · глубокий режим{% endif %}
     · база: {{ pl.base.nmck | money('₽') }}
     {% if pl.base.mode == 'pd_share' and pl.base.pd_share_pct %} · на ПД ~{{ pl.base.pd_share_pct }}% цены ({{ pl.base.rationale }}){% endif %}
+    {% if pl.base.object_kind %} · тип: {{ {'building': 'здание', 'landscaping': 'благоустройство', 'heritage': 'ОКН', 'linear': 'линейный', 'other': 'прочее'}.get(pl.base.object_kind, pl.base.object_kind) }}{% endif %}
+    {% if pl.base.design_stage %} · стадия: {{ {'pd': 'ПД', 'rd': 'РД', 'pd_rd': 'ПД+РД'}.get(pl.base.design_stage, pl.base.design_stage) }}{% endif %}
   </div>
 
   {% for w in pl.warnings %}
@@ -444,6 +374,7 @@
             </td>
             <td class="py-1.5 pr-2 text-xs text-slate-500">
               {% if line.source == 'analog' %}медиана по {{ line.n_analogs }} аналог.{% if line.range_pct %} ({{ line.range_pct[0] }}–{{ line.range_pct[1] }}%){% endif %}
+              {% elif line.source == 'sbcp' %}<span class="text-sky-700 font-medium">норматив СБЦП</span> (приведён к затратам бюро)
               {% elif line.source == 'ai' %}ИИ по типу проекта{% if line.range_pct %}, диапазон истории {{ line.range_pct[0] }}–{{ line.range_pct[1] }}%{% endif %}
               {% elif line.source == 'user' %}правка человека
               {% else %}<span class="text-amber-700 font-medium">нет данных — оцените вручную</span>{% endif %}

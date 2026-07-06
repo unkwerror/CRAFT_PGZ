@@ -50,6 +50,8 @@ def build_economics_xlsx(payload: dict[str, Any], *, title: str, reestr: str) ->
         comment_parts = []
         if line.get("source") == "no_data":
             comment_parts.append("НЕТ ДАННЫХ — оценить вручную")
+        elif line.get("source") == "sbcp":
+            comment_parts.append("норматив СБЦП")
         if line.get("note"):
             comment_parts.append(str(line["note"]))
         if line.get("n_analogs"):

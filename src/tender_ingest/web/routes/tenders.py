@@ -12,7 +12,6 @@ from tender_ingest.documents.prompt import FIELD_LABELS
 from tender_ingest.economics.store import EconomicsStore
 from tender_ingest.web.doc_analysis_job import job as doc_analysis_job
 from tender_ingest.web.economics_job import job as economics_job
-from tender_ingest.web.recommend_job import job as recommend_job
 from tender_ingest.web.repository import PAGE_SIZE, DocumentRepository, Filters, WebRepository
 from tender_ingest.web.scoring_job import job
 from tender_ingest.web.security import require_auth
@@ -103,8 +102,6 @@ def detail(request: Request, reestr_number: str, msg: str | None = None) -> HTML
         is_favorite = tracking.is_favorite(reestr_number)
         participation = tracking.get_participation(reestr_number)
         notes = tracking.list_notes(reestr_number)
-        recommendation = tracking.latest_recommendation(reestr_number)
-        rec_feedback = tracking.feedback_for(recommendation.id) if recommendation else []
 
         eco_store = EconomicsStore(session)
         economics = eco_store.latest_for(reestr_number)
@@ -130,17 +127,6 @@ def detail(request: Request, reestr_number: str, msg: str | None = None) -> HTML
             and (dt.datetime.now(dt.UTC) - ej.finished_at).total_seconds() < _FINISHED_BANNER_SEC
         ):
             eco_job_msg = ej.message
-
-        rj = recommend_job.snapshot()
-        rec_job_msg = None
-        if (
-            not rj.running
-            and rj.message
-            and rj.reestr_number == reestr_number
-            and rj.finished_at is not None
-            and (dt.datetime.now(dt.UTC) - rj.finished_at).total_seconds() < _FINISHED_BANNER_SEC
-        ):
-            rec_job_msg = rj.message
         return templates.TemplateResponse(
             request,
             "tenders/detail.html",
@@ -161,9 +147,5 @@ def detail(request: Request, reestr_number: str, msg: str | None = None) -> HTML
                 "participation": participation,
                 "notes": notes,
                 "status_labels": STATUS_LABELS,
-                "recommendation": recommendation,
-                "rec_feedback": rec_feedback,
-                "econ_job": rj,
-                "econ_job_msg": rec_job_msg,
             },
         )

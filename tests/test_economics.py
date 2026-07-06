@@ -14,6 +14,7 @@ from tender_ingest.economics.engine import (
     build_payload,
     overhead_history_ranges,
 )
+from tender_ingest.economics.sbcp import sbcp_weights
 from tender_ingest.economics.store import AnalogProject
 from tender_ingest.economics.xlsx import parse_workbook
 
@@ -213,3 +214,83 @@ def test_overhead_history_ranges_fallback() -> None:
     assert ranges["gip"] == (2.0, 15.0)
     lo, hi = ranges["reserve"]
     assert lo < hi
+
+
+# --- СБЦП (второй источник долей) ---
+
+
+def test_sbcp_weights_normalized() -> None:
+    for stage in ("pd", "rd", "pd_rd"):
+        weights = sbcp_weights(stage)
+        base_sum = sum(v for k, v in weights.items() if k not in ("ios2_3", "ar_kr"))
+        assert abs(base_sum - 1.0) < 1e-9, stage
+        # составные — суммы частей
+        assert abs(weights["ios2_3"] - (weights["ios2"] + weights["ios3"])) < 1e-12
+    pd = sbcp_weights("pd")
+    # точные значения из таблицы 41 СБЦП ЖГС (проценты/100)
+    assert abs(pd["ar"] - 0.14) < 1e-9
+    assert abs(pd["odi"] - 0.02) < 1e-9
+    assert abs(pd["oos"] - 0.07) < 1e-9
+    # в РД нет ПЗ и ПОС
+    rd = sbcp_weights("rd")
+    assert "pz" not in rd and "pos" not in rd
+
+
+def test_sbcp_fallback_scales_to_bureau_level() -> None:
+    # аналоги дают якоря ar и kr; ios4 без аналогов -> оценка по СБЦП с коэффициентом k
+    base = BaseInput(nmck=10_000_000.0)
+    sections = [
+        SectionInput(name="АР", canon="ar"),
+        SectionInput(name="КР", canon="kr"),
+        SectionInput(name="ОВиК", canon="ios4"),
+    ]
+    analogs = [
+        _analog(1, {"ar": 0.04, "kr": 0.05}),
+        _analog(2, {"ar": 0.04, "kr": 0.05}),
+    ]
+    payload = build_payload(
+        base=base,
+        sections=sections,
+        overheads=[],
+        analogs=analogs,
+        all_projects=analogs,
+        object_kind="building",
+        design_stage="pd",
+    )
+    weights = sbcp_weights("pd")
+    k_values = sorted([0.04 / weights["ar"], 0.05 / weights["kr"]])
+    k = (k_values[0] + k_values[1]) / 2  # медиана двух якорей
+    ovik = payload["lines"][2]
+    assert ovik["source"] == "sbcp"
+    assert ovik["amount"] == round(weights["ios4"] * k * 10_000_000.0, 2)
+    assert "СБЦП" in ovik["note"]
+    assert not payload["no_data"]  # раздел оценён нормативом, не потерян
+
+
+def test_sbcp_not_applied_outside_buildings_or_without_anchors() -> None:
+    base = BaseInput(nmck=1_000_000.0)
+    sections = [SectionInput(name="ОВиК", canon="ios4"), SectionInput(name="АР", canon="ar")]
+    analogs = [_analog(1, {"ar": 0.04}), _analog(2, {"ar": 0.05})]
+    # благоустройство — СБЦП ЖГС не применяется
+    landscaping = build_payload(
+        base=base,
+        sections=sections,
+        overheads=[],
+        analogs=analogs,
+        all_projects=analogs,
+        object_kind="landscaping",
+        design_stage="pd",
+    )
+    assert landscaping["lines"][0]["source"] == "no_data"
+    # здание, но якорь один (только ar) — фолбэк честно отключается с предупреждением
+    building = build_payload(
+        base=base,
+        sections=sections,
+        overheads=[],
+        analogs=analogs,
+        all_projects=analogs,
+        object_kind="building",
+        design_stage="pd",
+    )
+    assert building["lines"][0]["source"] == "no_data"
+    assert any("СБЦП не применён" in w for w in building["warnings"])
