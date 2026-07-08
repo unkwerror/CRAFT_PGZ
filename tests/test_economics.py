@@ -314,6 +314,112 @@ def test_apply_editor_state_nmck_change_and_offer_switch() -> None:
     assert offered["totals"]["price"] > 0
 
 
+def test_weighted_analogs_prefer_close_scale() -> None:
+    """Аналог близкого масштаба перевешивает: доля берётся ближе к его значению."""
+    base = BaseInput(nmck=10_000_000.0)
+    sections = [SectionInput(name="АР", canon="ar")]
+    analogs = [
+        AnalogProject(id=1, sheet="work", title="Близкий", contract_total=9_000_000.0,
+                      sections={"ar": 0.05}, section_names={}, amounts={}),
+        AnalogProject(id=2, sheet="work", title="Крупный", contract_total=200_000_000.0,
+                      sections={"ar": 0.11}, section_names={}, amounts={}),
+        AnalogProject(id=3, sheet="preliminary", title="Прикидка", contract_total=150_000_000.0,
+                      sections={"ar": 0.12}, section_names={}, amounts={}),
+    ]
+    payload = build_payload(
+        base=base, sections=sections, overheads=[], analogs=analogs, all_projects=analogs
+    )
+    # невзвешенная медиана дала бы 11%; близкий по масштабу аналог тянет к 5%
+    assert payload["lines"][0]["share_pct"] == 5.0
+
+
+def test_plan_fact_correction_applied() -> None:
+    base, sections, overheads, analogs = _base_inputs()
+    plan_fact = {"pzu": (1.30, 4), "__all__": (1.10, 12)}
+    payload = build_payload(
+        base=base, sections=sections, overheads=overheads, analogs=analogs,
+        all_projects=analogs, plan_fact=plan_fact,
+    )
+    pzu = payload["lines"][0]
+    # медиана 3% от 10 млн = 300к, факт-коэффициент 1.30 -> 390к
+    assert pzu["amount"] == 390_000.0
+    assert "план/факт бюро ×1.30" in pzu["note"]
+    assert any("план/факт" in w for w in payload["warnings"])
+    # ar (аналоговый) корректируется общим коэффициентом 1.10
+    ar = payload["lines"][1]
+    assert ar["amount"] == round(500_000.0 * 1.10, 2)
+
+
+def test_totals_range_present() -> None:
+    base, sections, overheads, analogs = _base_inputs()
+    payload = build_payload(
+        base=base, sections=sections, overheads=overheads, analogs=analogs, all_projects=analogs
+    )
+    rng = payload["totals_range"]
+    assert rng is not None
+    assert rng["n"] >= 3
+    assert rng["p25"] <= rng["p75"]
+    # после ручной правки диапазон честно сбрасывается
+    state = {
+        "lines": _editor_rows(payload, "lines"),
+        "overheads": _editor_rows(payload, "overheads"),
+    }
+    state["lines"][0]["amount"] = 999_999.0
+    state["lines"][0]["touched"] = "amount"
+    edited = apply_editor_state(payload, state)
+    assert "totals_range" not in edited
+
+
+def test_expertise_rules() -> None:
+    from tender_ingest.economics.expertise import assess_expertise
+
+    # 44-ФЗ без драйверов -> бюджет -> гос обязательна
+    assert assess_expertise({}, "44-ФЗ")["verdict"] == "state_required"
+    # капремонт побеждает всё
+    kap = assess_expertise({"drivers": {"kapremont": True}}, "44-ФЗ")
+    assert kap["verdict"] == "not_required"
+    # малый нежилой объект без опасности
+    small = assess_expertise(
+        {"drivers": {"object_use": "nonresidential", "floors": 2, "area_m2": 1200,
+                     "budget_funded": False}},
+        "Коммерческие",
+    )
+    assert small["verdict"] == "not_required"
+    # коммерческий без оснований для гос -> негос допустима
+    nongov = assess_expertise({"drivers": {"budget_funded": False}}, "Коммерческие")
+    assert nongov["verdict"] == "nongov_allowed"
+    # ничего не известно -> честный unknown
+    assert assess_expertise({}, None)["verdict"] == "unknown"
+    # ОКН -> гос даже без бюджета
+    okn = assess_expertise({"drivers": {"okn": True, "budget_funded": False}}, "Коммерческие")
+    assert okn["verdict"] == "state_required"
+
+
+def test_sbcp_check_flags_deviation() -> None:
+    base = BaseInput(nmck=10_000_000.0)
+    sections = [
+        SectionInput(name="АР", canon="ar"),
+        SectionInput(name="КР", canon="kr"),
+        SectionInput(name="ПЗ", canon="pz"),
+    ]
+    analogs = [
+        _analog(1, {"ar": 0.10, "kr": 0.11, "pz": 0.10}),  # ПЗ аномально дорогой
+        _analog(2, {"ar": 0.11, "kr": 0.12, "pz": 0.09}),
+        _analog(3, {"ar": 0.09, "kr": 0.10, "pz": 0.11}),
+    ]
+    payload = build_payload(
+        base=base, sections=sections, overheads=[], analogs=analogs, all_projects=analogs,
+        object_kind="building", design_stage="pd",
+    )
+    check = payload["sbcp_check"]
+    assert check is not None
+    assert check["total_sbcp"] > 0
+    # нормативные суммы проставлены построчно
+    assert all(line.get("sbcp_amount") for line in payload["lines"])
+    # ПЗ по СБЦП ~2% от базы, а у нас 10% -> сильное отклонение должно быть отмечено
+    assert any("СБЦП" in w for w in payload["warnings"])
+
+
 def test_overhead_history_ranges_fallback() -> None:
     ranges = overhead_history_ranges([])  # пустая история -> страховочные диапазоны
     assert ranges["gip"] == (2.0, 15.0)

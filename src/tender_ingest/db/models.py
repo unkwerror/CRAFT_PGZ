@@ -321,3 +321,41 @@ class TenderNote(Base):
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class LaborRate(Base):
+    """Ставка роли бюро: полная стоимость часа = оклад × налоги × накладные / фонд часов.
+
+    Заполняется импортом из Excel-шаблона (tender labor-template / labor-import).
+    Повторный импорт заменяет содержимое (снимок одного файла).
+    """
+
+    __tablename__ = "labor_rates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    role: Mapped[str] = mapped_column(Text, unique=True, nullable=False)  # ГИП, АР, КР…
+    monthly_salary: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    tax_coef: Mapped[Decimal] = mapped_column(Numeric(6, 3), nullable=False)  # напр. 1.302
+    overhead_coef: Mapped[Decimal] = mapped_column(Numeric(6, 3), nullable=False)  # офис и пр.
+    fund_hours: Mapped[Decimal] = mapped_column(Numeric(7, 1), nullable=False)  # часов/мес
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class LaborHours(Base):
+    """Факт часов по завершённому проекту: канон раздела × роль -> часы.
+
+    База для модели трудозатрат (себестоимость = часы × полная ставка роли).
+    """
+
+    __tablename__ = "labor_hours"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_title: Mapped[str] = mapped_column(Text, nullable=False)
+    canon: Mapped[str | None] = mapped_column(String(32), index=True)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    hours: Mapped[Decimal] = mapped_column(Numeric(9, 1), nullable=False)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

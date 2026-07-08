@@ -82,6 +82,12 @@ function ecoEditorInit() {
     el('eco-total-note').textContent = offer
       ? 'прибыль при предложенной цене: ' + money(pl.totals.profit_at_offer) + ' ₽ (' + pl.totals.margin_pct + '%)'
       : 'прибыль при НМЦК: ' + money(pl.totals.profit_at_nmck) + ' ₽ (' + pl.totals.margin_pct + '%)';
+    var range = el('eco-range');
+    if (range) {
+      range.textContent = pl.totals_range
+        ? 'разброс по аналогам: ' + money(pl.totals_range.p25) + ' – ' + money(pl.totals_range.p75) + ' ₽ (' + pl.totals_range.n + ' аналог.)'
+        : '';
+    }
     el('eco-offer-row').hidden = !offer;
     el('eco-target-wrap').hidden = !offer;
     if (offer) {

@@ -64,6 +64,43 @@ def economics_import_cmd(file_: Path) -> None:
     )
 
 
+@main.command("labor-template")
+@click.option(
+    "--out",
+    "out_",
+    default=Path("Трудозатраты_шаблон.xlsx"),
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Куда сохранить Excel-шаблон для заполнения бюро",
+)
+def labor_template_cmd(out_: Path) -> None:
+    """Сгенерировать Excel-шаблон трудозатрат (ставки ролей + часы по проектам)."""
+    from tender_ingest.economics.labor import write_template
+
+    write_template(out_)
+    click.echo(f"Шаблон сохранён: {out_}")
+
+
+@main.command("labor-import")
+@click.option(
+    "--file",
+    "file_",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Заполненный шаблон трудозатрат (.xlsx)",
+)
+def labor_import_cmd(file_: Path) -> None:
+    """Импортировать ставки ролей и факт часов (полная замена таблиц)."""
+    from tender_ingest.db.session import get_session_factory
+    from tender_ingest.economics.labor import import_workbook
+
+    with get_session_factory()() as session:
+        summary = import_workbook(file_, session)
+    click.echo(
+        f"rates={summary.rates} hours_rows={summary.hours_rows} "
+        f"without_canon={summary.hours_without_canon}"
+    )
+
+
 @main.command("score")
 @click.option("--limit", type=int, default=None, help="Сколько закупок из очереди оценить")
 def score_cmd(limit: int | None) -> None:

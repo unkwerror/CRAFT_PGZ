@@ -14,7 +14,7 @@ from decimal import Decimal
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from tender_ingest.db.models import EconomicsLine, EconomicsProject, TenderEconomics
+from tender_ingest.db.models import EconomicsLine, EconomicsProject, Tender, TenderEconomics
 from tender_ingest.economics.xlsx import ParsedProject
 
 
@@ -146,6 +146,95 @@ class EconomicsStore:
 
     def knowledge_base_size(self) -> int:
         return len(self.session.execute(select(EconomicsProject.id)).all())
+
+    def plan_fact_ratios(self) -> dict[str, tuple[float, int]]:
+        """Медианные коэффициенты факт/план по канонам (сколько РЕАЛЬНО вышло против плана).
+
+        Ключи: канон (n>=3), '__group_<группа>' (n>=5), '__all__' (n>=10). Строки без
+        канона участвуют только в групповом/общем. Выбросы (x5 в любую сторону) отброшены.
+        """
+        from tender_ingest.economics.canon import CATALOG_BY_KEY
+
+        rows = self.session.execute(
+            select(EconomicsLine.canon, EconomicsLine.planned, EconomicsLine.fact).where(
+                EconomicsLine.fact.is_not(None), EconomicsLine.planned.is_not(None)
+            )
+        ).all()
+        by_canon: dict[str, list[float]] = {}
+        by_group: dict[str, list[float]] = {}
+        all_ratios: list[float] = []
+        for canon, planned, fact in rows:
+            p, f = float(planned), float(fact)
+            if p <= 0 or f <= 0:
+                continue
+            ratio = f / p
+            if not 0.2 <= ratio <= 5.0:
+                continue
+            all_ratios.append(ratio)
+            if canon:
+                by_canon.setdefault(canon, []).append(ratio)
+                section = CATALOG_BY_KEY.get(canon)
+                if section is not None:
+                    by_group.setdefault(section.group, []).append(ratio)
+
+        result: dict[str, tuple[float, int]] = {}
+        for canon, ratios in by_canon.items():
+            if len(ratios) >= 3:
+                result[canon] = (round(statistics.median(ratios), 3), len(ratios))
+        for group, ratios in by_group.items():
+            if len(ratios) >= 5:
+                result[f"__group_{group}"] = (round(statistics.median(ratios), 3), len(ratios))
+        if len(all_ratios) >= 10:
+            result["__all__"] = (round(statistics.median(all_ratios), 3), len(all_ratios))
+        return result
+
+    def market_drop_stats(self, law: str | None = None) -> dict[str, object] | None:
+        """Снижение цены победителями на завершённых торгах из базы: 1 − победитель/НМЦК.
+
+        Считается по тендерам с заполненным result.winner_offer (появляются из выгрузок
+        Контура по завершённым закупкам). law сужает выборку; при <5 наблюдений с законом
+        — фолбэк на все. None — данных нет вовсе.
+        """
+        rows = self.session.execute(
+            select(Tender.nmck, Tender.result, Tender.law).where(Tender.nmck.is_not(None))
+        ).all()
+
+        def drops(law_filter: str | None) -> list[float]:
+            out: list[float] = []
+            for nmck, result, row_law in rows:
+                if law_filter is not None and row_law != law_filter:
+                    continue
+                raw = (result or {}).get("winner_offer")
+                if raw in (None, ""):
+                    continue
+                try:
+                    winner = float(str(raw).replace("\xa0", "").replace(" ", "").replace(",", "."))
+                except ValueError:
+                    continue
+                nmck_f = float(nmck)
+                if winner <= 0 or nmck_f <= 0 or winner > nmck_f:
+                    continue
+                drop = 1.0 - winner / nmck_f
+                if drop <= 0.7:  # снижение >70% — аномалия/ошибка данных
+                    out.append(drop)
+            return out
+
+        values = drops(law)
+        used_law = law
+        if len(values) < 5:
+            values = drops(None)
+            used_law = None
+        if len(values) < 5:
+            return None
+        values.sort()
+        n = len(values)
+        return {
+            "median_pct": round(statistics.median(values) * 100, 1),
+            "p25_pct": round(values[n // 4] * 100, 1),
+            "p75_pct": round(values[(3 * n) // 4] * 100, 1),
+            "n": n,
+            "law": used_law,
+        }
 
     # --- расчёты экономики тендера (append-only) ---
 

@@ -74,6 +74,22 @@ quote и page — как везде. Если состав работ в ТЗ н
 - expertise — нужна ли гос./негос. экспертиза, какая, и КТО её оплачивает;
 - bim — требуется ли BIM/ТИМ-модель, в каком объёме, форматы, стадии, LOD.
 
+ДРАЙВЕРЫ (объект drivers — структурированные факты для алгоритмов; null = в ТЗ нет):
+- budget_funded — финансирование из бюджета (госзаказ, субсидии, бюджетные средства);
+- kapremont — предмет закупки: капитальный ремонт (не строительство/реконструкция);
+- floors — этажность (максимальная, число);
+- area_m2 — общая площадь объекта в кв. м (число, без единиц);
+- buildings_count — количество отдельных зданий/сооружений;
+- okn — объект культурного наследия или работы в зонах охраны ОКН;
+- object_use — residential (жилой) | nonresidential (нежилой) | industrial \
+(производственный) | linear (линейный) | null;
+- special_territory — ООПТ, шельф, исключительная экономическая зона, морские воды;
+- hazardous_or_unique — особо опасный, технически сложный или уникальный объект;
+- expertise_in_tz — что о прохождении экспертизы написано в САМОМ ТЗ: state (гос) | \
+nongov (негос) | none (не требуется) | null (не сказано);
+- expertise_paid_by — designer (за счёт проектировщика) | customer (заказчика) | null.
+Заполняй только тем, что реально следует из ТЗ и карточки — НЕ выдумывай.
+
 summary — развёрнутый бриф на 5–10 предложений: суть объекта, состав и объём работ, \
 стадии, сроки, экспертиза, BIM, ключевые требования и главные риски — цельная картина \
 для решения о подаче."""
@@ -90,6 +106,43 @@ _FIELD = {
     "additionalProperties": False,
 }
 
+_DRIVERS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "budget_funded": {"type": ["boolean", "null"]},
+        "kapremont": {"type": ["boolean", "null"]},
+        "floors": {"type": ["number", "null"]},
+        "area_m2": {"type": ["number", "null"]},
+        "buildings_count": {"type": ["number", "null"]},
+        "okn": {"type": ["boolean", "null"]},
+        "object_use": {
+            "type": ["string", "null"],
+            "enum": ["residential", "nonresidential", "industrial", "linear", None],
+        },
+        "special_territory": {"type": ["boolean", "null"]},
+        "hazardous_or_unique": {"type": ["boolean", "null"]},
+        "expertise_in_tz": {"type": ["string", "null"], "enum": ["state", "nongov", "none", None]},
+        "expertise_paid_by": {
+            "type": ["string", "null"],
+            "enum": ["designer", "customer", None],
+        },
+    },
+    "required": [
+        "budget_funded",
+        "kapremont",
+        "floors",
+        "area_m2",
+        "buildings_count",
+        "okn",
+        "object_use",
+        "special_territory",
+        "hazardous_or_unique",
+        "expertise_in_tz",
+        "expertise_paid_by",
+    ],
+    "additionalProperties": False,
+}
+
 BRIEF_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -101,6 +154,7 @@ BRIEF_SCHEMA: dict[str, Any] = {
         "deadlines": _FIELD,
         "expertise": _FIELD,
         "bim": _FIELD,
+        "drivers": _DRIVERS_SCHEMA,
         "findings": {
             "type": "array",
             "items": {
@@ -144,6 +198,7 @@ BRIEF_SCHEMA: dict[str, Any] = {
         "deadlines",
         "expertise",
         "bim",
+        "drivers",
         "findings",
         "work_breakdown",
     ],

@@ -44,7 +44,9 @@
     <input data-f="amount" value="{{ line.amount if line.amount is not none else '' }}"
            class="w-28 border border-slate-200 rounded px-1.5 py-0.5 text-right {{ 'bg-amber-50' if line.source == 'no_data' }}">
   </td>
-  <td class="py-1.5 pr-2 text-xs text-slate-500" data-role="basis">{{ basis_text(line) }}</td>
+  <td class="py-1.5 pr-2 text-xs text-slate-500" data-role="basis">{{ basis_text(line) }}
+    {%- if line.sbcp_amount is defined and line.sbcp_amount is not none %}<div class="text-sky-600/80 mt-0.5">СБЦП ~{{ line.sbcp_amount | money('₽') }}</div>{% endif -%}
+  </td>
   <td class="py-1.5 text-center">
     <button type="button" data-role="del" title="Удалить строку" class="text-slate-300 hover:text-red-600">✕</button>
   </td>
@@ -126,10 +128,37 @@
     {% if pl.base.mode == 'pd_share' and pl.base.pd_share_pct %} · на ПД ~{{ pl.base.pd_share_pct }}% цены ({{ pl.base.rationale }}){% endif %}
   </div>
 
+  {% if pl.expertise %}
+  {% set exp = pl.expertise %}
+  {% set exp_labels = {'state_required': 'гос экспертиза обязательна',
+                       'nongov_allowed': 'допустима негос (дешевле и быстрее)',
+                       'not_required': 'экспертиза не требуется',
+                       'unknown': 'режим не определён'} %}
+  <details class="mb-3 border rounded-md {{ 'border-emerald-200 bg-emerald-50/50' if exp.verdict == 'nongov_allowed' else 'border-slate-200 bg-slate-50' }}">
+    <summary class="cursor-pointer px-3 py-2 text-[13px] text-slate-700">
+      <span class="font-medium">Экспертиза ПД (ст. 49 ГрК):</span> {{ exp_labels.get(exp.verdict, exp.verdict) }}
+    </summary>
+    <div class="px-3 pb-2.5 text-[13px] leading-6 text-slate-600">
+      {% for r in exp.reasons %}<div>· {{ r }}</div>{% endfor %}
+      <div class="mt-1 text-slate-700">{{ exp.recommendation }}</div>
+    </div>
+  </details>
+  {% endif %}
+
+  {% set critical = [] %}{% set minor = [] %}
+  {% for w in pl.warnings %}{% if w.startswith('⚠') %}{% set _ = critical.append(w) %}{% else %}{% set _ = minor.append(w) %}{% endif %}{% endfor %}
   <div id="eco-warnings">
-    {% for w in pl.warnings %}
-    <div class="mb-2 text-[13px] leading-6 {{ 'text-red-800 bg-red-50 border-red-200' if w.startswith('⚠') else 'text-amber-800 bg-amber-50 border-amber-200' }} border rounded-md px-3 py-1.5">{{ w }}</div>
+    {% for w in critical %}
+    <div class="mb-2 text-[13px] leading-6 text-red-800 bg-red-50 border-red-200 border rounded-md px-3 py-1.5">{{ w }}</div>
     {% endfor %}
+    {% if minor %}
+    <details class="mb-2 border border-amber-200 bg-amber-50/60 rounded-md">
+      <summary class="cursor-pointer px-3 py-1.5 text-[13px] text-amber-800">Примечания к расчёту ({{ minor | length }})</summary>
+      <div class="px-3 pb-2 space-y-1">
+        {% for w in minor %}<div class="text-[13px] leading-6 text-amber-800">· {{ w }}</div>{% endfor %}
+      </div>
+    </details>
+    {% endif %}
   </div>
 
   {# --- база расчёта: правится прямо здесь, пересчёт живой --- #}
@@ -195,12 +224,17 @@
           <td class="py-2 pr-2" colspan="2">ИТОГО себестоимость</td>
           <td class="py-2 pr-2 text-right" id="eco-total-share">{{ ((pl.totals.cost / pl.base.nmck * 100) | round(1)) if pl.base.nmck else '' }}</td>
           <td class="py-2 pr-2 text-right whitespace-nowrap" id="eco-total-cost">{{ pl.totals.cost | money('') }}</td>
-          <td class="py-2 pr-2 text-xs font-normal text-slate-500" colspan="2" id="eco-total-note">
-            {% if offer %}
-            прибыль при предложенной цене: {{ pl.totals.profit_at_offer | money('₽') }} ({{ pl.totals.margin_pct }}%)
-            {% else %}
-            прибыль при НМЦК: {{ pl.totals.profit_at_nmck | money('₽') }} ({{ pl.totals.margin_pct }}%)
-            {% endif %}
+          <td class="py-2 pr-2 text-xs font-normal text-slate-500" colspan="2">
+            <span id="eco-total-note">
+              {% if offer %}
+              прибыль при предложенной цене: {{ pl.totals.profit_at_offer | money('₽') }} ({{ pl.totals.margin_pct }}%)
+              {% else %}
+              прибыль при НМЦК: {{ pl.totals.profit_at_nmck | money('₽') }} ({{ pl.totals.margin_pct }}%)
+              {% endif %}
+            </span>
+            <span id="eco-range" class="block mt-0.5 text-slate-400">
+              {% if pl.totals_range %}разброс по аналогам: {{ pl.totals_range.p25 | money('') }} – {{ pl.totals_range.p75 | money('₽') }} ({{ pl.totals_range.n }} аналог.){% endif %}
+            </span>
           </td>
         </tr>
         <tr class="font-semibold text-indigo-900 bg-indigo-50/60" id="eco-offer-row" {% if not offer %}hidden{% endif %}>
@@ -244,21 +278,49 @@
         — ниже опускаться нельзя
         {% endif %}
       </div>
+      {% if pl.market_drop %}
+      {% set md = pl.market_drop %}
+      <div class="mt-2 text-[13px] text-slate-700 bg-sky-50 border border-sky-200 rounded-md px-3 py-2">
+        Рынок: победители снижают цену в медиане на <span class="font-semibold">{{ md.median_pct }}%</span>
+        (типично {{ md.p25_pct }}–{{ md.p75_pct }}%, {{ md.n }} завершённых торгов{{ ' по ' ~ md.law if md.law }}).
+        {% if pl.base.nmck %}
+        Цена с медианным снижением: <span class="font-semibold">{{ (pl.base.nmck * (1 - md.median_pct / 100)) | money('₽') }}</span>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if pl.sbcp_check %}
+      {% set sc = pl.sbcp_check %}
+      <details class="mt-2 border border-sky-200 bg-sky-50/50 rounded-md">
+        <summary class="cursor-pointer px-3 py-1.5 text-[13px] text-slate-700">
+          Сверка с нормативами СБЦП: расхождение <span class="font-semibold {{ 'text-red-700' if sc.deviation_pct | abs > 30 else 'text-slate-800' }}">{{ '%+.0f' % sc.deviation_pct }}%</span>
+        </summary>
+        <div class="px-3 pb-2 text-[13px] leading-6 text-slate-600">
+          Разделы по истории бюро: {{ sc.total_bureau | money('₽') }} · по нормативной структуре: {{ sc.total_sbcp | money('₽') }}
+          (стадия {{ sc.stage }}, приведение к уровню бюро по {{ sc.anchors }} якорям).
+          Нормативные суммы по каждой строке — в колонке «Основание» (СБЦП ~…).
+          <div class="text-xs text-slate-400 mt-1">{{ sc.source }}</div>
+        </div>
+      </details>
+      {% endif %}
     </div>
     <div>
-      <div class="text-xs font-semibold text-slate-500 mb-1.5">Проекты-аналоги ({{ pl.analogs | length }})</div>
-      <div class="space-y-1.5">
-        {% for a in pl.analogs %}
-        <div class="text-[13px] leading-5 bg-slate-50 border border-slate-100 rounded-md px-2.5 py-1.5">
-          <span class="font-medium text-slate-800">{{ a.title }}</span>
-          <span class="text-slate-400">· {{ 'факт' if a.sheet == 'work' else 'прикидка' }}{% if a.contract_total %} · {{ a.contract_total | money('₽') }}{% endif %}</span>
-          {% if a.reason %}<div class="text-xs text-slate-500 mt-0.5">{{ a.reason }}</div>{% endif %}
+      <details>
+        <summary class="cursor-pointer text-xs font-semibold text-slate-500 mb-1.5">Проекты-аналоги ({{ pl.analogs | length }}) — показать</summary>
+        <div class="space-y-1.5 mt-1.5">
+          {% for a in pl.analogs %}
+          <div class="text-[13px] leading-5 bg-slate-50 border border-slate-100 rounded-md px-2.5 py-1.5">
+            <span class="font-medium text-slate-800">{{ a.title }}</span>
+            <span class="text-slate-400">· {{ 'факт' if a.sheet == 'work' else 'прикидка' }}{% if a.contract_total %} · {{ a.contract_total | money('₽') }}{% endif %}</span>
+            {% if a.reason %}<div class="text-xs text-slate-500 mt-0.5">{{ a.reason }}</div>{% endif %}
+          </div>
+          {% endfor %}
         </div>
-        {% endfor %}
-      </div>
+      </details>
       {% if pl.comments %}
-      <div class="text-xs font-semibold text-slate-500 mt-3 mb-1">Комментарий ИИ</div>
-      <p class="text-[13px] leading-6 text-slate-600">{{ pl.comments }}</p>
+      <details class="mt-3">
+        <summary class="cursor-pointer text-xs font-semibold text-slate-500 mb-1">Комментарий ИИ</summary>
+        <p class="text-[13px] leading-6 text-slate-600 mt-1">{{ pl.comments }}</p>
+      </details>
       {% endif %}
     </div>
   </div>
@@ -282,6 +344,8 @@
     {% endif %}
 
     {% if rv.adjustments %}
+    <details {{ 'open' if not rv.applied }}>
+    <summary class="cursor-pointer text-xs font-semibold text-slate-500 mb-1.5">Рекомендации по строкам ({{ rv.adjustments | length }})</summary>
     <div class="overflow-x-auto">
       <table class="w-full text-[13px]">
         <thead><tr class="text-xs text-slate-400 text-left border-b border-slate-200">
@@ -318,44 +382,44 @@
       </button>
     </form>
     {% endif %}
+    </details>
     {% endif %}
 
     {% if rv.missing_costs %}
-    <div class="text-xs font-semibold text-slate-500 mt-3 mb-1">Чего не хватает в расчёте</div>
-    <div class="space-y-1">
-      {% for m in rv.missing_costs %}
-      <div class="text-[13px] leading-6 text-amber-900 bg-amber-50 border border-amber-100 rounded-md px-2.5 py-1">
-        {{ m.name }}{% if m.estimate is not none %} — ~{{ m.estimate | money('₽') }}{% endif %}
-        {% if m.reasoning %}<span class="text-amber-700"> · {{ m.reasoning }}</span>{% endif %}
-        {% if m.source %}<span class="text-amber-600 text-xs break-all"> ({{ m.source }})</span>{% endif %}
+    <details class="mt-3">
+      <summary class="cursor-pointer text-xs font-semibold text-amber-700 mb-1">Чего не хватает в расчёте ({{ rv.missing_costs | length }})</summary>
+      <div class="space-y-1 mt-1">
+        {% for m in rv.missing_costs %}
+        <div class="text-[13px] leading-6 text-amber-900 bg-amber-50 border border-amber-100 rounded-md px-2.5 py-1">
+          {{ m.name }}{% if m.estimate is not none %} — ~{{ m.estimate | money('₽') }}{% endif %}
+          {% if m.reasoning %}<span class="text-amber-700"> · {{ m.reasoning }}</span>{% endif %}
+          {% if m.source %}<span class="text-amber-600 text-xs break-all"> ({{ m.source }})</span>{% endif %}
+        </div>
+        {% endfor %}
       </div>
-      {% endfor %}
-    </div>
+    </details>
     {% endif %}
 
-    <div class="grid md:grid-cols-2 gap-4 mt-3">
-      {% if rv.market_notes %}
-      <div>
-        <div class="text-xs font-semibold text-slate-500 mb-1">Рыночные ориентиры (открытые источники)</div>
-        <div class="space-y-1">
-          {% for n in rv.market_notes %}
-          <div class="text-[13px] leading-5 text-slate-600 bg-slate-50 border border-slate-100 rounded-md px-2.5 py-1.5">
-            {{ n.note }}{% if n.source %}<div class="text-xs text-slate-400 break-all">{{ n.source }}</div>{% endif %}
-          </div>
-          {% endfor %}
-        </div>
+    {% if rv.suggested_price and rv.suggested_price.price is not none %}
+    <div class="mt-3 max-w-md">
+      <div class="text-[14px] bg-indigo-50 border border-indigo-200 rounded-md px-3 py-2.5">
+        Цена от ИИ: <span class="font-semibold text-indigo-900 text-base">{{ rv.suggested_price.price | money('₽') }}</span>
+        {% if rv.suggested_price.rationale %}<div class="text-[13px] leading-6 text-indigo-900/80 mt-1">{{ rv.suggested_price.rationale }}</div>{% endif %}
       </div>
-      {% endif %}
-      {% if rv.suggested_price and rv.suggested_price.price is not none %}
-      <div>
-        <div class="text-xs font-semibold text-slate-500 mb-1">Цена от ИИ</div>
-        <div class="text-[14px] bg-indigo-50 border border-indigo-200 rounded-md px-3 py-2.5">
-          <div class="font-semibold text-indigo-900 text-base">{{ rv.suggested_price.price | money('₽') }}</div>
-          {% if rv.suggested_price.rationale %}<div class="text-[13px] leading-6 text-indigo-900/80 mt-1">{{ rv.suggested_price.rationale }}</div>{% endif %}
-        </div>
-      </div>
-      {% endif %}
     </div>
+    {% endif %}
+    {% if rv.market_notes %}
+    <details class="mt-3">
+      <summary class="cursor-pointer text-xs font-semibold text-slate-500 mb-1">Рыночные ориентиры ({{ rv.market_notes | length }})</summary>
+      <div class="space-y-1 mt-1">
+        {% for n in rv.market_notes %}
+        <div class="text-[13px] leading-5 text-slate-600 bg-slate-50 border border-slate-100 rounded-md px-2.5 py-1.5">
+          {{ n.note }}{% if n.source %}<div class="text-xs text-slate-400 break-all">{{ n.source }}</div>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
   </div>
   {% endif %}
 
