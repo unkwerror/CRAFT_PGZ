@@ -245,7 +245,9 @@ class EconomicsProposer:
             overhead_ranges=overhead_ranges,
             deep_text=deep_text,
         )
-        resp = self._client.messages.create(
+        # stream: при max_tokens 24000 SDK запрещает не-стриминговые запросы
+        # («Streaming is required for operations that may take longer than 10 minutes»)
+        with self._client.messages.stream(
             model=self._model,
             max_tokens=_MAX_TOKENS,
             system=[
@@ -256,7 +258,8 @@ class EconomicsProposer:
                 "effort": "high",
                 "format": {"type": "json_schema", "schema": PROPOSAL_SCHEMA},
             },
-        )
+        ) as stream:
+            resp = stream.get_final_message()
         if resp.stop_reason == "max_tokens":
             raise RuntimeError(
                 "Ответ ИИ обрезан лимитом токенов — расчёт неполный, попробуйте ещё раз"

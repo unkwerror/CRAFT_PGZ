@@ -166,7 +166,8 @@ class EconomicsReviewer:
             + "\n\n"
             "=== РАСЧЁТ АЛГОРИТМА ===\n" + _payload_digest(payload)
         )
-        resp = self._client.messages.create(
+        # stream: большие max_tokens + веб-поиск — SDK требует стриминг для долгих запросов
+        with self._client.messages.stream(
             model=self._model,
             max_tokens=_MAX_TOKENS,
             system=[
@@ -181,7 +182,8 @@ class EconomicsReviewer:
                     "max_uses": _MAX_WEB_SEARCHES,
                 }
             ],
-        )
+        ) as stream:
+            resp = stream.get_final_message()
         text = "".join(getattr(block, "text", "") for block in resp.content)
         usage = resp.usage
         log.info(

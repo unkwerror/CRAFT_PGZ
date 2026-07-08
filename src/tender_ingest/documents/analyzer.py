@@ -79,7 +79,8 @@ class DocumentAnalyzer:
         карточки, извлечённые из ТЗ; системный промпт не меняется (кэш сохраняется).
         """
         schema = brief_schema_with_card() if extract_card else BRIEF_SCHEMA
-        resp = self._client.messages.create(
+        # stream: при max_tokens 24000 SDK запрещает не-стриминговые запросы (>10 мин)
+        with self._client.messages.stream(
             model=self._model,
             max_tokens=_MAX_TOKENS,
             system=[
@@ -90,7 +91,8 @@ class DocumentAnalyzer:
                 "effort": "high",
                 "format": {"type": "json_schema", "schema": schema},
             },
-        )
+        ) as stream:
+            resp = stream.get_final_message()
         if resp.stop_reason == "max_tokens":
             raise RuntimeError(
                 "Ответ ИИ обрезан лимитом токенов — бриф неполный, попробуйте ещё раз"
