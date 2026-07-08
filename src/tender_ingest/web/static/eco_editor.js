@@ -29,13 +29,13 @@ function ecoEditorInit() {
     root.querySelectorAll('textarea[data-f=name]').forEach(autosize);
   }
   autosizeAll();
-  // прямой заход по #economics: вкладку открывает скрипт табов, который
-  // выполняется ПОСЛЕ инициализации редактора — пересчитываем после парсинга
-  setTimeout(autosizeAll, 0);
-  document.addEventListener('click', function (e) {
-    if (e.target.closest('[data-tab]')) setTimeout(autosizeAll, 0);
-  });
-  window.addEventListener('hashchange', function () { setTimeout(autosizeAll, 0); });
+  // Вкладку открывает скрипт табов (снятием hidden) — наблюдаем атрибут напрямую:
+  // это покрывает и клик, и прямой заход по #economics, без гонок с порядком скриптов
+  var panel = root.closest('[data-panel]');
+  if (panel) {
+    new MutationObserver(autosizeAll).observe(panel, { attributes: true, attributeFilter: ['hidden'] });
+  }
+  window.addEventListener('load', autosizeAll);
 
   function collectBucket(tbodyId) {
     var refs = [];
