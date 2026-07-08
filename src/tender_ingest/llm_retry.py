@@ -16,7 +16,8 @@ import structlog
 
 log = structlog.get_logger()
 
-_ATTEMPTS = 3
+# 4 попытки: паузы ~5с/15с/45с — переживаем эпизод перегрузки API длиной ~минуту
+_ATTEMPTS = 4
 _BASE_DELAY_SEC = 5.0
 
 
