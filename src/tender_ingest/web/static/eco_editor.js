@@ -29,6 +29,9 @@ function ecoEditorInit() {
     root.querySelectorAll('textarea[data-f=name]').forEach(autosize);
   }
   autosizeAll();
+  // прямой заход по #economics: вкладку открывает скрипт табов, который
+  // выполняется ПОСЛЕ инициализации редактора — пересчитываем после парсинга
+  setTimeout(autosizeAll, 0);
   document.addEventListener('click', function (e) {
     if (e.target.closest('[data-tab]')) setTimeout(autosizeAll, 0);
   });
