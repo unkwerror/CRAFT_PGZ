@@ -134,11 +134,9 @@
                        'nongov_allowed': 'допустима негос (дешевле и быстрее)',
                        'not_required': 'экспертиза не требуется',
                        'unknown': 'режим не определён'} %}
-  <details class="mb-3 border rounded-md {{ 'border-emerald-200 bg-emerald-50/50' if exp.verdict == 'nongov_allowed' else 'border-slate-200 bg-slate-50' }}">
-    <summary class="cursor-pointer px-3 py-2 text-[13px] text-slate-700">
-      <span class="font-medium">Экспертиза ПД (ст. 49 ГрК):</span> {{ exp_labels.get(exp.verdict, exp.verdict) }}
-    </summary>
-    <div class="px-3 pb-2.5 text-[13px] leading-6 text-slate-600">
+  <details class="mb-3">
+    <summary>Экспертиза ПД (ст. 49 ГрК): {{ exp_labels.get(exp.verdict, exp.verdict) }}</summary>
+    <div class="px-3 py-2.5 text-[13px] leading-6 text-slate-600 border rounded-md {{ 'border-emerald-200 bg-emerald-50/50' if exp.verdict == 'nongov_allowed' else 'border-slate-200 bg-slate-50' }}">
       {% for r in exp.reasons %}<div>· {{ r }}</div>{% endfor %}
       <div class="mt-1 text-slate-700">{{ exp.recommendation }}</div>
     </div>
@@ -152,9 +150,9 @@
     <div class="mb-2 text-[13px] leading-6 text-red-800 bg-red-50 border-red-200 border rounded-md px-3 py-1.5">{{ w }}</div>
     {% endfor %}
     {% if minor %}
-    <details class="mb-2 border border-amber-200 bg-amber-50/60 rounded-md">
-      <summary class="cursor-pointer px-3 py-1.5 text-[13px] text-amber-800">Примечания к расчёту ({{ minor | length }})</summary>
-      <div class="px-3 pb-2 space-y-1">
+    <details class="mb-2">
+      <summary>Примечания к расчёту ({{ minor | length }})</summary>
+      <div class="px-3 py-2 space-y-1 border border-amber-200 bg-amber-50/60 rounded-md">
         {% for w in minor %}<div class="text-[13px] leading-6 text-amber-800">· {{ w }}</div>{% endfor %}
       </div>
     </details>
@@ -290,11 +288,9 @@
       {% endif %}
       {% if pl.sbcp_check %}
       {% set sc = pl.sbcp_check %}
-      <details class="mt-2 border border-sky-200 bg-sky-50/50 rounded-md">
-        <summary class="cursor-pointer px-3 py-1.5 text-[13px] text-slate-700">
-          Сверка с нормативами СБЦП: расхождение <span class="font-semibold {{ 'text-red-700' if sc.deviation_pct | abs > 30 else 'text-slate-800' }}">{{ '%+.0f' % sc.deviation_pct }}%</span>
-        </summary>
-        <div class="px-3 pb-2 text-[13px] leading-6 text-slate-600">
+      <details class="mt-2">
+        <summary>Сверка с СБЦП: расхождение <span class="{{ 'text-red-700' if sc.deviation_pct | abs > 30 }}">{{ '%+.0f' % sc.deviation_pct }}%</span></summary>
+        <div class="px-3 py-2 text-[13px] leading-6 text-slate-600 border border-sky-200 bg-sky-50/50 rounded-md">
           Разделы по истории бюро: {{ sc.total_bureau | money('₽') }} · по нормативной структуре: {{ sc.total_sbcp | money('₽') }}
           (стадия {{ sc.stage }}, приведение к уровню бюро по {{ sc.anchors }} якорям).
           Нормативные суммы по каждой строке — в колонке «Основание» (СБЦП ~…).
@@ -305,8 +301,8 @@
     </div>
     <div>
       <details>
-        <summary class="cursor-pointer text-xs font-semibold text-slate-500 mb-1.5">Проекты-аналоги ({{ pl.analogs | length }}) — показать</summary>
-        <div class="space-y-1.5 mt-1.5">
+        <summary>Проекты-аналоги ({{ pl.analogs | length }})</summary>
+        <div class="space-y-1.5">
           {% for a in pl.analogs %}
           <div class="text-[13px] leading-5 bg-slate-50 border border-slate-100 rounded-md px-2.5 py-1.5">
             <span class="font-medium text-slate-800">{{ a.title }}</span>
@@ -318,8 +314,8 @@
       </details>
       {% if pl.comments %}
       <details class="mt-3">
-        <summary class="cursor-pointer text-xs font-semibold text-slate-500 mb-1">Комментарий ИИ</summary>
-        <p class="text-[13px] leading-6 text-slate-600 mt-1">{{ pl.comments }}</p>
+        <summary>Комментарий ИИ</summary>
+        <p class="text-[13px] leading-6 text-slate-600">{{ pl.comments }}</p>
       </details>
       {% endif %}
     </div>
@@ -345,7 +341,7 @@
 
     {% if rv.adjustments %}
     <details {{ 'open' if not rv.applied }}>
-    <summary class="cursor-pointer text-xs font-semibold text-slate-500 mb-1.5">Рекомендации по строкам ({{ rv.adjustments | length }})</summary>
+    <summary>Рекомендации по строкам ({{ rv.adjustments | length }})</summary>
     <div class="overflow-x-auto">
       <table class="w-full text-[13px]">
         <thead><tr class="text-xs text-slate-400 text-left border-b border-slate-200">
@@ -387,8 +383,8 @@
 
     {% if rv.missing_costs %}
     <details class="mt-3">
-      <summary class="cursor-pointer text-xs font-semibold text-amber-700 mb-1">Чего не хватает в расчёте ({{ rv.missing_costs | length }})</summary>
-      <div class="space-y-1 mt-1">
+      <summary>Чего не хватает в расчёте ({{ rv.missing_costs | length }})</summary>
+      <div class="space-y-1">
         {% for m in rv.missing_costs %}
         <div class="text-[13px] leading-6 text-amber-900 bg-amber-50 border border-amber-100 rounded-md px-2.5 py-1">
           {{ m.name }}{% if m.estimate is not none %} — ~{{ m.estimate | money('₽') }}{% endif %}
@@ -410,8 +406,8 @@
     {% endif %}
     {% if rv.market_notes %}
     <details class="mt-3">
-      <summary class="cursor-pointer text-xs font-semibold text-slate-500 mb-1">Рыночные ориентиры ({{ rv.market_notes | length }})</summary>
-      <div class="space-y-1 mt-1">
+      <summary>Рыночные ориентиры ({{ rv.market_notes | length }})</summary>
+      <div class="space-y-1">
         {% for n in rv.market_notes %}
         <div class="text-[13px] leading-5 text-slate-600 bg-slate-50 border border-slate-100 rounded-md px-2.5 py-1.5">
           {{ n.note }}{% if n.source %}<div class="text-xs text-slate-400 break-all">{{ n.source }}</div>{% endif %}

@@ -24,6 +24,7 @@ from tender_ingest.web.routes import (
     closed,
     documents,
     economics,
+    labor,
     score,
     tenders,
     tracking,
@@ -70,6 +71,7 @@ def create_app() -> FastAPI:
     app.include_router(closed.router)
     app.include_router(tracking.router)
     app.include_router(analytics.router)
+    app.include_router(labor.router)
     app.include_router(blacklist.router)
     app.include_router(tenders.router)
     return app

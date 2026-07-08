@@ -1,3 +1,28 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Разворачиваемые блоки: summary — заметная кнопка с шевроном.
+   Классы в шаблонах не нужны — стиль общий для всех details внутри main. */
+@layer components {
+  main details > summary {
+    @apply inline-flex items-center gap-2 cursor-pointer select-none rounded-md
+      border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-sm font-semibold
+      text-indigo-800 hover:bg-indigo-100 hover:border-indigo-300 transition;
+    list-style: none;
+  }
+  main details > summary::-webkit-details-marker {
+    display: none;
+  }
+  main details > summary::before {
+    content: "▸";
+    @apply text-indigo-500 text-base leading-none;
+    transition: transform 0.15s ease;
+  }
+  main details[open] > summary::before {
+    transform: rotate(90deg);
+  }
+  main details[open] > summary {
+    @apply mb-2;
+  }
+}

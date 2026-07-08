@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Трудозатраты{% endblock %}
+
+{% block content %}
+
+{% if msg %}
+<div class="mb-4 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5">{{ msg }}</div>
+{% endif %}
+
+<div class="bg-white rounded-lg border border-slate-200 p-6">
+  <h1 class="text-lg font-semibold text-slate-900 mb-1">Трудозатраты</h1>
+  <p class="text-sm text-slate-500 mb-5">
+    База для расчёта себестоимости по часам: <b>полная ставка часа = оклад × коэф. налогов ×
+    коэф. накладных ÷ фонд часов</b>. Правится прямо здесь; альтернатива — Excel-шаблон
+    (<code class="text-xs bg-slate-100 rounded px-1">tender labor-template</code> →
+    <code class="text-xs bg-slate-100 rounded px-1">tender labor-import</code>).
+  </p>
+
+  <h2 class="text-sm font-semibold text-slate-700 mb-2">Ставки ролей ({{ rates | length }})</h2>
+  {% for r in rates %}<form id="rate-{{ r.id }}" action="/labor/rates/save" method="post"></form>{% endfor %}
+  <form id="rate-new" action="/labor/rates/save" method="post"></form>
+  <div class="overflow-x-auto mb-8">
+    <table class="w-full text-[13px]">
+      <thead>
+        <tr class="text-xs text-slate-400 border-b border-slate-200 text-left">
+          <th class="py-1.5 pr-2 font-medium">Роль</th>
+          <th class="py-1.5 pr-2 font-medium w-32">Оклад, ₽/мес</th>
+          <th class="py-1.5 pr-2 font-medium w-24">Коэф. налогов</th>
+          <th class="py-1.5 pr-2 font-medium w-24">Коэф. накладных</th>
+          <th class="py-1.5 pr-2 font-medium w-24">Фонд ч/мес</th>
+          <th class="py-1.5 pr-2 font-medium w-28 text-right">Ставка, ₽/ч</th>
+          <th class="w-24"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% macro rate_inputs(fid, r) %}
+        <td class="py-1.5 pr-2">
+          <input form="{{ fid }}" type="hidden" name="rate_id" value="{{ r.id if r else '' }}">
+          <input form="{{ fid }}" name="role" value="{{ r.role if r else '' }}" placeholder="напр. Архитектор"
+                 class="w-full border border-slate-200 rounded px-2 py-1">
+        </td>
+        <td class="py-1.5 pr-2"><input form="{{ fid }}" name="monthly_salary" value="{{ r.monthly_salary if r else '' }}" class="w-full border border-slate-200 rounded px-2 py-1 text-right"></td>
+        <td class="py-1.5 pr-2"><input form="{{ fid }}" name="tax_coef" value="{{ r.tax_coef if r else '1.302' }}" class="w-full border border-slate-200 rounded px-2 py-1 text-right"></td>
+        <td class="py-1.5 pr-2"><input form="{{ fid }}" name="overhead_coef" value="{{ r.overhead_coef if r else '1.5' }}" class="w-full border border-slate-200 rounded px-2 py-1 text-right"></td>
+        <td class="py-1.5 pr-2"><input form="{{ fid }}" name="fund_hours" value="{{ r.fund_hours if r else '164' }}" class="w-full border border-slate-200 rounded px-2 py-1 text-right"></td>
+        {% endmacro %}
+        {% for r in rates %}
+        <tr class="border-b border-slate-100">
+          {{ rate_inputs('rate-' ~ r.id, r) }}
+          <td class="py-1.5 pr-2 text-right font-medium text-slate-800 whitespace-nowrap">{{ hourly[r.id] | money('') }}</td>
+          <td class="py-1.5 whitespace-nowrap">
+            <button form="rate-{{ r.id }}" class="text-indigo-600 hover:text-indigo-800 font-medium text-xs">Сохранить</button>
+            <form action="/labor/rates/{{ r.id }}/delete" method="post" class="inline ml-2"
+                  onsubmit="return confirm('Удалить ставку «{{ r.role }}»?')">
+              <button class="text-slate-400 hover:text-red-600 text-xs">удалить</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        <tr class="bg-slate-50/60">
+          {{ rate_inputs('rate-new', None) }}
+          <td class="py-1.5 pr-2 text-right text-slate-300">—</td>
+          <td class="py-1.5"><button form="rate-new" class="bg-slate-900 text-white rounded px-3 py-1 text-xs hover:bg-slate-700">+ Добавить</button></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 class="text-sm font-semibold text-slate-700 mb-2">Часы по завершённым проектам ({{ hours | length }})</h2>
+  <p class="text-xs text-slate-400 mb-2">Название проекта пишите как в таблице «Экономика» — тогда часы привяжутся к аналогам.</p>
+  {% for h in hours %}<form id="hours-{{ h.id }}" action="/labor/hours/save" method="post"></form>{% endfor %}
+  <form id="hours-new" action="/labor/hours/save" method="post"></form>
+  <datalist id="role-list">{% for role in roles %}<option value="{{ role }}">{% endfor %}</datalist>
+  <div class="overflow-x-auto">
+    <table class="w-full text-[13px]">
+      <thead>
+        <tr class="text-xs text-slate-400 border-b border-slate-200 text-left">
+          <th class="py-1.5 pr-2 font-medium">Проект</th>
+          <th class="py-1.5 pr-2 font-medium w-64">Раздел работ</th>
+          <th class="py-1.5 pr-2 font-medium w-48">Роль</th>
+          <th class="py-1.5 pr-2 font-medium w-24">Часы</th>
+          <th class="w-24"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% macro hours_inputs(fid, h) %}
+        <td class="py-1.5 pr-2">
+          <input form="{{ fid }}" type="hidden" name="hours_id" value="{{ h.id if h else '' }}">
+          <input form="{{ fid }}" name="project_title" value="{{ h.project_title if h else '' }}" placeholder="как в «Экономике»"
+                 class="w-full border border-slate-200 rounded px-2 py-1">
+        </td>
+        <td class="py-1.5 pr-2">
+          <select form="{{ fid }}" name="canon" class="w-full border border-slate-200 rounded px-1 py-1 bg-white text-xs">
+            <option value="">— раздел не указан —</option>
+            {% for s in catalog %}
+            <option value="{{ s.key }}" {{ 'selected' if h and h.canon == s.key }}>{{ s.label }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td class="py-1.5 pr-2"><input form="{{ fid }}" name="role" list="role-list" value="{{ h.role if h else '' }}" class="w-full border border-slate-200 rounded px-2 py-1"></td>
+        <td class="py-1.5 pr-2"><input form="{{ fid }}" name="hours" value="{{ h.hours if h else '' }}" class="w-full border border-slate-200 rounded px-2 py-1 text-right"></td>
+        {% endmacro %}
+        {% for h in hours %}
+        <tr class="border-b border-slate-100">
+          {{ hours_inputs('hours-' ~ h.id, h) }}
+          <td class="py-1.5 whitespace-nowrap">
+            <button form="hours-{{ h.id }}" class="text-indigo-600 hover:text-indigo-800 font-medium text-xs">Сохранить</button>
+            <form action="/labor/hours/{{ h.id }}/delete" method="post" class="inline ml-2"
+                  onsubmit="return confirm('Удалить строку часов?')">
+              <button class="text-slate-400 hover:text-red-600 text-xs">удалить</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        <tr class="bg-slate-50/60">
+          {{ hours_inputs('hours-new', None) }}
+          <td class="py-1.5"><button form="hours-new" class="bg-slate-900 text-white rounded px-3 py-1 text-xs hover:bg-slate-700">+ Добавить</button></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

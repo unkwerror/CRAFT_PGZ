@@ -15,7 +15,7 @@ from pathlib import Path
 import openpyxl
 from openpyxl.styles import Font
 from openpyxl.worksheet.worksheet import Worksheet
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from tender_ingest.db.models import LaborHours, LaborRate
@@ -49,6 +49,104 @@ class LaborImportSummary:
     rates: int
     hours_rows: int
     hours_without_canon: int
+
+
+def hourly_rate(rate: LaborRate) -> float:
+    """Полная стоимость часа роли: оклад × налоги × накладные / фонд часов."""
+    fund = float(rate.fund_hours)
+    if fund <= 0:
+        return 0.0
+    return float(rate.monthly_salary) * float(rate.tax_coef) * float(rate.overhead_coef) / fund
+
+
+class LaborRepository:
+    """Ставки ролей и факт часов — редактирование из веб-интерфейса (/labor)."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    # --- ставки ---
+
+    def list_rates(self) -> list[LaborRate]:
+        return list(
+            self.session.execute(select(LaborRate).order_by(LaborRate.role)).scalars().all()
+        )
+
+    def save_rate(
+        self,
+        rate_id: int | None,
+        *,
+        role: str,
+        monthly_salary: Decimal,
+        tax_coef: Decimal,
+        overhead_coef: Decimal,
+        fund_hours: Decimal,
+    ) -> None:
+        """Обновить по id либо создать; конфликт по роли -> обновляем существующую."""
+        row = self.session.get(LaborRate, rate_id) if rate_id else None
+        if row is None:
+            row = self.session.execute(
+                select(LaborRate).where(LaborRate.role == role)
+            ).scalar_one_or_none()
+        if row is None:
+            row = LaborRate(
+                role=role,
+                monthly_salary=monthly_salary,
+                tax_coef=tax_coef,
+                overhead_coef=overhead_coef,
+                fund_hours=fund_hours,
+            )
+            self.session.add(row)
+        else:
+            row.role = role
+            row.monthly_salary = monthly_salary
+            row.tax_coef = tax_coef
+            row.overhead_coef = overhead_coef
+            row.fund_hours = fund_hours
+        self.session.commit()
+
+    def delete_rate(self, rate_id: int) -> None:
+        row = self.session.get(LaborRate, rate_id)
+        if row is not None:
+            self.session.delete(row)
+            self.session.commit()
+
+    # --- часы по проектам ---
+
+    def list_hours(self) -> list[LaborHours]:
+        return list(
+            self.session.execute(
+                select(LaborHours).order_by(LaborHours.project_title, LaborHours.id)
+            )
+            .scalars()
+            .all()
+        )
+
+    def save_hours(
+        self,
+        hours_id: int | None,
+        *,
+        project_title: str,
+        canon: str | None,
+        role: str,
+        hours: Decimal,
+    ) -> None:
+        row = self.session.get(LaborHours, hours_id) if hours_id else None
+        if row is None:
+            row = LaborHours(project_title=project_title, canon=canon, role=role, hours=hours)
+            self.session.add(row)
+        else:
+            row.project_title = project_title
+            row.canon = canon
+            row.role = role
+            row.hours = hours
+        self.session.commit()
+
+    def delete_hours(self, hours_id: int) -> None:
+        row = self.session.get(LaborHours, hours_id)
+        if row is not None:
+            self.session.delete(row)
+            self.session.commit()
 
 
 def write_template(path: Path) -> None:
