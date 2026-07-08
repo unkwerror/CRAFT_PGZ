@@ -26,6 +26,7 @@ from tender_ingest.documents.prompt import (
     build_message,
     build_pdf_message,
 )
+from tender_ingest.llm_retry import call_with_retries
 
 log = structlog.get_logger()
 
@@ -80,19 +81,22 @@ class DocumentAnalyzer:
         """
         schema = brief_schema_with_card() if extract_card else BRIEF_SCHEMA
         # stream: при max_tokens 24000 SDK запрещает не-стриминговые запросы (>10 мин)
-        with self._client.messages.stream(
-            model=self._model,
-            max_tokens=_MAX_TOKENS,
-            system=[
-                {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
-            ],
-            messages=[{"role": "user", "content": content}],
-            output_config={
-                "effort": "high",
-                "format": {"type": "json_schema", "schema": schema},
-            },
-        ) as stream:
-            resp = stream.get_final_message()
+        def _do() -> anthropic.types.Message:
+            with self._client.messages.stream(
+                model=self._model,
+                max_tokens=_MAX_TOKENS,
+                system=[
+                    {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
+                ],
+                messages=[{"role": "user", "content": content}],
+                output_config={
+                    "effort": "high",
+                    "format": {"type": "json_schema", "schema": schema},
+                },
+            ) as stream:
+                return stream.get_final_message()
+
+        resp = call_with_retries(_do, label=label)
         if resp.stop_reason == "max_tokens":
             raise RuntimeError(
                 "Ответ ИИ обрезан лимитом токенов — бриф неполный, попробуйте ещё раз"

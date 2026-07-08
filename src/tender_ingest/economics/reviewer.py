@@ -20,6 +20,7 @@ import anthropic
 import structlog
 
 from tender_ingest.config import MissingApiKeyError, Settings, get_settings
+from tender_ingest.llm_retry import call_with_retries
 
 log = structlog.get_logger()
 
@@ -167,23 +168,26 @@ class EconomicsReviewer:
             "=== РАСЧЁТ АЛГОРИТМА ===\n" + _payload_digest(payload)
         )
         # stream: большие max_tokens + веб-поиск — SDK требует стриминг для долгих запросов
-        with self._client.messages.stream(
-            model=self._model,
-            max_tokens=_MAX_TOKENS,
-            system=[
-                {"type": "text", "text": REVIEW_SYSTEM, "cache_control": {"type": "ephemeral"}}
-            ],
-            messages=[{"role": "user", "content": message}],
-            output_config={"effort": "high"},
-            tools=[
-                {
-                    "type": "web_search_20250305",
-                    "name": "web_search",
-                    "max_uses": _MAX_WEB_SEARCHES,
-                }
-            ],
-        ) as stream:
-            resp = stream.get_final_message()
+        def _call() -> anthropic.types.Message:
+            with self._client.messages.stream(
+                model=self._model,
+                max_tokens=_MAX_TOKENS,
+                system=[
+                    {"type": "text", "text": REVIEW_SYSTEM, "cache_control": {"type": "ephemeral"}}
+                ],
+                messages=[{"role": "user", "content": message}],
+                output_config={"effort": "high"},
+                tools=[
+                    {
+                        "type": "web_search_20250305",
+                        "name": "web_search",
+                        "max_uses": _MAX_WEB_SEARCHES,
+                    }
+                ],
+            ) as stream:
+                return stream.get_final_message()
+
+        resp = call_with_retries(_call, label="economics_reviewer")
         text = "".join(getattr(block, "text", "") for block in resp.content)
         usage = resp.usage
         log.info(

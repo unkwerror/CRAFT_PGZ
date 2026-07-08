@@ -29,6 +29,7 @@ from tender_ingest.economics.engine import (
     SectionInput,
 )
 from tender_ingest.economics.store import AnalogProject, contract_scale_note
+from tender_ingest.llm_retry import call_with_retries
 
 log = structlog.get_logger()
 
@@ -247,19 +248,22 @@ class EconomicsProposer:
         )
         # stream: при max_tokens 24000 SDK запрещает не-стриминговые запросы
         # («Streaming is required for operations that may take longer than 10 minutes»)
-        with self._client.messages.stream(
-            model=self._model,
-            max_tokens=_MAX_TOKENS,
-            system=[
-                {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
-            ],
-            messages=[{"role": "user", "content": message}],
-            output_config={
-                "effort": "high",
-                "format": {"type": "json_schema", "schema": PROPOSAL_SCHEMA},
-            },
-        ) as stream:
-            resp = stream.get_final_message()
+        def _call() -> anthropic.types.Message:
+            with self._client.messages.stream(
+                model=self._model,
+                max_tokens=_MAX_TOKENS,
+                system=[
+                    {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
+                ],
+                messages=[{"role": "user", "content": message}],
+                output_config={
+                    "effort": "high",
+                    "format": {"type": "json_schema", "schema": PROPOSAL_SCHEMA},
+                },
+            ) as stream:
+                return stream.get_final_message()
+
+        resp = call_with_retries(_call, label="economics_proposer")
         if resp.stop_reason == "max_tokens":
             raise RuntimeError(
                 "Ответ ИИ обрезан лимитом токенов — расчёт неполный, попробуйте ещё раз"
