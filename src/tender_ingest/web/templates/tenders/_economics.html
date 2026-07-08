@@ -22,6 +22,7 @@
 
 {% macro basis_text(line) %}
   {%- if line.source == 'analog' -%}медиана по {{ line.n_analogs }} аналог.{% if line.range_pct %} ({{ line.range_pct[0] }}–{{ line.range_pct[1] }}%){% endif %}{% if line.range_amount %} ({{ line.range_amount[0] | money('') }}–{{ line.range_amount[1] | money('₽') }}){% endif %}
+  {%- elif line.source == 'derived' -%}<span class="text-violet-700 font-medium">производная</span>: design-группа {{ line.n_analogs }} аналог. минус занятые разделы, доля стадии по СБЦП{% if line.range_amount %} ({{ line.range_amount[0] | money('') }}–{{ line.range_amount[1] | money('₽') }}){% endif %}{% if line.range_pct %} ({{ line.range_pct[0] }}–{{ line.range_pct[1] }}%){% endif %}
   {%- elif line.source == 'sbcp' -%}<span class="text-sky-700 font-medium">норматив СБЦП</span> (приведён к затратам бюро)
   {%- elif line.source == 'ai' -%}ИИ по типу проекта{% if line.range_pct %}, диапазон истории {{ line.range_pct[0] }}–{{ line.range_pct[1] }}%{% endif %}
   {%- elif line.source == 'user' -%}правка человека

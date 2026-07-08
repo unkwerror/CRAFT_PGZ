@@ -11,7 +11,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from tender_ingest.db.session import get_session_factory
-from tender_ingest.economics.engine import apply_editor_state, apply_edits, canon_median_hints
+from tender_ingest.economics.engine import (
+    apply_editor_state,
+    apply_edits,
+    canon_median_hints,
+    occupied_design_canons,
+)
 from tender_ingest.economics.export import build_economics_xlsx
 from tender_ingest.economics.store import EconomicsStore
 from tender_ingest.web.economics_job import job as eco_job
@@ -152,7 +157,10 @@ def _editor_payload(
     analog_ids = {a.get("id") for a in payload.get("analogs", [])}
     analogs = [p for p in session_store.analog_projects() if p.id in analog_ids]
     nmck = state.get("base", {}).get("nmck", payload.get("base", {}).get("nmck"))
-    medians = canon_median_hints(analogs, nmck=nmck) if analogs else {}
+    occupied = occupied_design_canons(row.get("canon") for row in state.get("lines", []))
+    medians = (
+        canon_median_hints(analogs, nmck=nmck, occupied_design=occupied) if analogs else {}
+    )
     return apply_editor_state(payload, state, canon_medians=medians)
 
 

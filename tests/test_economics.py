@@ -593,6 +593,38 @@ def test_aggregate_nmck_mode_shares() -> None:
     assert line["amount"] == 1_300_000.0
 
 
+def test_aggregate_hints_and_editor_prefill() -> None:
+    """Редактор: pd_total в hints с учётом занятых канонов; prefill -> derived."""
+    from tender_ingest.economics.engine import occupied_design_canons
+
+    analogs = _aggregate_case_analogs()
+    occupied = occupied_design_canons(["kr", "smeta"])
+    assert occupied == {"kr", "smeta", "ar_kr"}  # композит закрыт с обеих сторон
+    hints = canon_median_hints(analogs, nmck=None, occupied_design=occupied)
+    assert "pd_total" in hints
+    # D без kr/smeta: 1600к/1750к/1270к -> медиана 1600к, ПД 40% = 640к
+    assert hints["pd_total"]["prefill"]["amount"] == 640_000.0
+
+    # новая строка в редакторе с каноном pd_total и без значений -> derived prefill
+    base = BaseInput(nmck=None)
+    sections = [SectionInput(name="КМ", canon="kr")]
+    payload = build_payload(
+        base=base, sections=sections, overheads=[], analogs=analogs, all_projects=analogs
+    )
+    state = {
+        "lines": [
+            *_editor_rows(payload, "lines"),
+            {"idx": None, "name": "ПД целиком", "canon": "pd_total", "amount": None,
+             "share_pct": None, "touched": None},
+        ],
+        "overheads": _editor_rows(payload, "overheads"),
+    }
+    edited = apply_editor_state(payload, state, canon_medians=hints)
+    new_line = edited["lines"][-1]
+    assert new_line["source"] == "derived"
+    assert new_line["amount"] == 640_000.0
+
+
 def test_double_design_canon_warning() -> None:
     base, _sections, overheads, analogs = _base_inputs()
     sections = [

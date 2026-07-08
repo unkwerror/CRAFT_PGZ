@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -253,18 +254,18 @@ def _apply_sbcp_fallback(
             line.update({"amount": _round2(scaled), "source": "sbcp", "note": note})
 
 
-def _occupied_design_canons(lines: list[dict[str, Any]]) -> set[str]:
+def occupied_design_canons(canons: Iterable[str | None]) -> set[str]:
     """Design-каноны, занятые обычными строками расчёта (для анти-задвоения агрегатов).
 
     Композиты раскрываются в обе стороны: занят ar -> исключаем и ar, и ar_kr аналога;
     занят ar_kr -> исключаем ar_kr, ar и kr. Лучше слегка занизить агрегат, чем задвоить.
     """
     occupied: set[str] = set()
-    for line in lines:
-        canon = line.get("canon")
+    for canon in canons:
         if not canon or canon in AGGREGATE_DESIGN_KEYS:
             continue
-        if line.get("group") != "design":
+        section = CATALOG_BY_KEY.get(canon)
+        if section is None or section.group != "design":
             continue
         occupied.add(canon)
         for composite, parts in COMPOSITE_SECTIONS.items():
@@ -330,7 +331,7 @@ def _apply_aggregate_estimates(
     уже расписанные отдельными строками, исключаются — иначе двойной счёт.
     """
     absolute = nmck is None
-    occupied = _occupied_design_canons(lines)
+    occupied = occupied_design_canons(line.get("canon") for line in lines)
     seen_aggregates: set[str] = set()
     for line in lines:
         canon = line.get("canon")
@@ -770,17 +771,31 @@ def apply_edits(
 
 
 def canon_median_hints(
-    analogs: list[AnalogProject], *, nmck: float | None
+    analogs: list[AnalogProject],
+    *,
+    nmck: float | None,
+    occupied_design: set[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Подсказки редактору по каждому канону с данными у аналогов расчёта.
 
     hints — метаданные строки (диапазон, число аналогов), prefill — стартовые
     значения для новой строки (медиана долей × НМЦК либо медиана сумм в offer-режиме).
+    Для агрегатных канонов (ПД/РД целиком) — производная оценка от design-группы
+    аналогов за вычетом occupied_design (каноны, уже занятые строками расчёта).
     """
     offer_mode = nmck is None
     out: dict[str, dict[str, Any]] = {}
     for canon in CATALOG_BY_KEY:
-        stats = _section_stats(canon, analogs, absolute=offer_mode)
+        if canon in AGGREGATE_DESIGN_KEYS:
+            stats = _aggregate_stats(
+                AGGREGATE_DESIGN_KEYS[canon],
+                analogs,
+                occupied_design or set(),
+                absolute=offer_mode,
+                target_total=nmck,
+            )
+        else:
+            stats = _section_stats(canon, analogs, absolute=offer_mode)
         if not stats.values:
             continue
         median = statistics.median(stats.values)
@@ -863,8 +878,15 @@ def _editor_row(
                 prefill = median.get("prefill", {})
                 if prefill:
                     line.update(prefill)
-                    line["source"] = "analog"
-                    line["note"] = "медиана по аналогам (строка добавлена вручную)"
+                    if canon in AGGREGATE_DESIGN_KEYS:
+                        line["source"] = "derived"
+                        line["note"] = (
+                            "производная по design-группе аналогов "
+                            "(строка добавлена вручную)"
+                        )
+                    else:
+                        line["source"] = "analog"
+                        line["note"] = "медиана по аналогам (строка добавлена вручную)"
 
     touched = row_state.get("touched")
     amount = row_state.get("amount")
