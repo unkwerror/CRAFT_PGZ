@@ -24,7 +24,14 @@ def _retryable(exc: Exception) -> bool:
     if isinstance(exc, anthropic.APIConnectionError | anthropic.RateLimitError):
         return True
     if isinstance(exc, anthropic.APIStatusError):
-        return exc.status_code == 429 or exc.status_code >= 500
+        if exc.status_code == 429 or exc.status_code >= 500:
+            return True
+        # Ошибка ВНУТРИ SSE-стрима приходит при HTTP 200 — статус бесполезен,
+        # тип смотрим в теле: {'error': {'type': 'overloaded_error', ...}}
+        body = exc.body if isinstance(exc.body, dict) else {}
+        error = body.get("error")
+        err_type = error.get("type") if isinstance(error, dict) else None
+        return err_type in ("overloaded_error", "api_error", "rate_limit_error")
     return False
 
 
