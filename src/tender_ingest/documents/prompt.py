@@ -115,31 +115,14 @@ _DRIVERS_SCHEMA: dict[str, Any] = {
         "area_m2": {"type": ["number", "null"]},
         "buildings_count": {"type": ["number", "null"]},
         "okn": {"type": ["boolean", "null"]},
-        # enum вместе с type ["string","null"] structured output НЕ принимает (400
-        # Invalid schema) — nullable-перечисления только через anyOf
-        "object_use": {
-            "anyOf": [
-                {
-                    "type": "string",
-                    "enum": ["residential", "nonresidential", "industrial", "linear"],
-                },
-                {"type": "null"},
-            ]
-        },
+        # БЕЗ enum: enum при nullable-типе даёт 400 Invalid schema, а anyOf-вариант
+        # раздувает грамматику до «compiled grammar is too large». Допустимые значения
+        # продиктованы промптом; правила экспертизы читают их толерантно.
+        "object_use": {"type": ["string", "null"]},
         "special_territory": {"type": ["boolean", "null"]},
         "hazardous_or_unique": {"type": ["boolean", "null"]},
-        "expertise_in_tz": {
-            "anyOf": [
-                {"type": "string", "enum": ["state", "nongov", "none"]},
-                {"type": "null"},
-            ]
-        },
-        "expertise_paid_by": {
-            "anyOf": [
-                {"type": "string", "enum": ["designer", "customer"]},
-                {"type": "null"},
-            ]
-        },
+        "expertise_in_tz": {"type": ["string", "null"]},
+        "expertise_paid_by": {"type": ["string", "null"]},
     },
     "required": [
         "budget_funded",
