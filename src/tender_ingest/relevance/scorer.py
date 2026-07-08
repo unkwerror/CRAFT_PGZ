@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 import structlog
 
+from tender_ingest.config import MissingApiKeyError
 from tender_ingest.db.repository import BlacklistRepository, RelevanceRepository
 from tender_ingest.db.session import get_session_factory
 from tender_ingest.relevance.arbiter import RelevanceArbiter, create_arbiter
@@ -125,7 +126,7 @@ def score_pending(
         if llm_jobs and arb is None:
             try:
                 arb = create_arbiter()
-            except ValueError as exc:
+            except MissingApiKeyError as exc:
                 log.warning("arbiter_unavailable", pending=len(llm_jobs), error=str(exc))
                 arb = None
 

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 import structlog
 
+from tender_ingest.config import MissingApiKeyError
 from tender_ingest.economics.service import EconomicsPreconditionError, calculate_economics
 
 log = structlog.get_logger()
@@ -97,7 +98,7 @@ class EconomicsJob:
             self._finish(f"Расчёт экономики готов: себестоимость {cost:,.0f} ₽".replace(",", " "))
         except EconomicsPreconditionError as exc:
             self._finish(str(exc))
-        except ValueError as exc:
+        except MissingApiKeyError as exc:
             self._finish("Не задан ключ ИИ — расчёт недоступен", error=str(exc))
         except Exception as exc:  # noqa: BLE001 — фон: не роняем поток, ошибку показываем в UI
             log.exception("economics_failed", reestr=reestr_number)

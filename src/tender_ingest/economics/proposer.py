@@ -20,7 +20,7 @@ from typing import Any
 import anthropic
 import structlog
 
-from tender_ingest.config import Settings, get_settings
+from tender_ingest.config import MissingApiKeyError, Settings, get_settings
 from tender_ingest.economics.canon import CATALOG
 from tender_ingest.economics.engine import (
     OVERHEAD_KEYS,
@@ -32,7 +32,9 @@ from tender_ingest.economics.store import AnalogProject, contract_scale_note
 
 log = structlog.get_logger()
 
-_MAX_TOKENS = 8000
+# Большое ТЗ даёт много sections с цитатами: 8000 не хватало (ответ обрезался,
+# json.loads падал). 16000 с запасом; обрезку теперь ловим по stop_reason.
+_MAX_TOKENS = 16000
 _SHEET_LABEL = {"work": "факт", "preliminary": "прикидка"}
 
 _CANON_KEYS = [s.key for s in CATALOG]
@@ -251,6 +253,10 @@ class EconomicsProposer:
             messages=[{"role": "user", "content": message}],
             output_config={"format": {"type": "json_schema", "schema": PROPOSAL_SCHEMA}},
         )
+        if resp.stop_reason == "max_tokens":
+            raise RuntimeError(
+                "Ответ ИИ обрезан лимитом токенов — расчёт неполный, попробуйте ещё раз"
+            )
         raw = "".join(getattr(block, "text", "") for block in resp.content)
         data: dict[str, Any] = json.loads(raw)
         usage = resp.usage
@@ -304,8 +310,8 @@ def _parse_proposal(data: dict[str, Any], nmck: float | None) -> Proposal:
 
 
 def create_economics_proposer(settings: Settings | None = None) -> EconomicsProposer:
-    """Собрать proposer из конфигурации. Без ключа -> ValueError."""
+    """Собрать proposer из конфигурации. Без ключа -> MissingApiKeyError."""
     cfg = settings or get_settings()
     if not cfg.anthropic_api_key:
-        raise ValueError("Нужен ANTHROPIC_API_KEY для расчёта экономики (Claude)")
+        raise MissingApiKeyError("Нужен ANTHROPIC_API_KEY для расчёта экономики (Claude)")
     return EconomicsProposer(api_key=cfg.anthropic_api_key, model=cfg.claude_model)

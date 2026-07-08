@@ -19,7 +19,7 @@ from typing import Any
 import anthropic
 import structlog
 
-from tender_ingest.config import Settings, get_settings
+from tender_ingest.config import MissingApiKeyError, Settings, get_settings
 
 log = structlog.get_logger()
 
@@ -198,5 +198,5 @@ class EconomicsReviewer:
 def create_economics_reviewer(settings: Settings | None = None) -> EconomicsReviewer:
     cfg = settings or get_settings()
     if not cfg.anthropic_api_key:
-        raise ValueError("Нужен ANTHROPIC_API_KEY для ИИ-ревью экономики")
+        raise MissingApiKeyError("Нужен ANTHROPIC_API_KEY для ИИ-ревью экономики")
     return EconomicsReviewer(api_key=cfg.anthropic_api_key, model=cfg.claude_model)

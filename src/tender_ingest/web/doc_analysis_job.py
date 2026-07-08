@@ -23,6 +23,7 @@ from typing import Any
 
 import structlog
 
+from tender_ingest.config import MissingApiKeyError
 from tender_ingest.db.models import AnalysisQueue, Tender, TenderRelevance
 from tender_ingest.db.session import get_session_factory
 from tender_ingest.documents.analyzer import create_document_analyzer
@@ -220,7 +221,7 @@ class DocAnalysisJob:
             self._finish(message)
         except UnsupportedDocumentError:
             self._finish("Разбор поддерживает только PDF, DOCX и XLSX")
-        except ValueError as exc:
+        except MissingApiKeyError as exc:
             self._finish("Не задан ключ ИИ — разбор недоступен", error=str(exc))
         except Exception as exc:  # noqa: BLE001 — фон: не роняем поток, ошибку показываем в UI
             log.exception("doc_analysis_failed", doc_id=doc_id)

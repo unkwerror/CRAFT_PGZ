@@ -12,6 +12,12 @@ from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+class MissingApiKeyError(RuntimeError):
+    """Не задан ANTHROPIC_API_KEY. Отдельный класс, чтобы фоновые джобы отличали
+    «нет ключа» от прочих ошибок (JSONDecodeError — подкласс ValueError, и широкий
+    except ValueError раньше выдавал её за отсутствие ключа)."""
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",

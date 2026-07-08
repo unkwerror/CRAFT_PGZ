@@ -17,7 +17,7 @@ import anthropic
 import structlog
 from pypdf import PdfReader, PdfWriter
 
-from tender_ingest.config import Settings, get_settings
+from tender_ingest.config import MissingApiKeyError, Settings, get_settings
 from tender_ingest.documents.prompt import (
     BRIEF_SCHEMA,
     SYSTEM_PROMPT,
@@ -86,6 +86,10 @@ class DocumentAnalyzer:
             messages=[{"role": "user", "content": content}],
             output_config={"format": {"type": "json_schema", "schema": schema}},
         )
+        if resp.stop_reason == "max_tokens":
+            raise RuntimeError(
+                "Ответ ИИ обрезан лимитом токенов — бриф неполный, попробуйте ещё раз"
+            )
         raw = "".join(getattr(block, "text", "") for block in resp.content)
         data: dict[str, Any] = json.loads(raw)
         u = resp.usage
@@ -157,8 +161,8 @@ class DocumentAnalyzer:
 
 
 def create_document_analyzer(settings: Settings | None = None) -> DocumentAnalyzer:
-    """Собрать анализатор из конфигурации. Без ключа -> ValueError."""
+    """Собрать анализатор из конфигурации. Без ключа -> MissingApiKeyError."""
     cfg = settings or get_settings()
     if not cfg.anthropic_api_key:
-        raise ValueError("Нужен ANTHROPIC_API_KEY для разбора ТЗ (Claude)")
+        raise MissingApiKeyError("Нужен ANTHROPIC_API_KEY для разбора ТЗ (Claude)")
     return DocumentAnalyzer(api_key=cfg.anthropic_api_key, model=cfg.claude_model)
