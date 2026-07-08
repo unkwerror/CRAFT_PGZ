@@ -402,6 +402,221 @@ def apply_edits(
     return result
 
 
+def canon_median_hints(
+    analogs: list[AnalogProject], *, nmck: float | None
+) -> dict[str, dict[str, Any]]:
+    """Подсказки редактору по каждому канону с данными у аналогов расчёта.
+
+    hints — метаданные строки (диапазон, число аналогов), prefill — стартовые
+    значения для новой строки (медиана долей × НМЦК либо медиана сумм в offer-режиме).
+    """
+    offer_mode = nmck is None
+    out: dict[str, dict[str, Any]] = {}
+    for canon in CATALOG_BY_KEY:
+        stats = _section_stats(canon, analogs, absolute=offer_mode)
+        if not stats.values:
+            continue
+        median = statistics.median(stats.values)
+        hints: dict[str, Any] = {"n_analogs": len(stats.values), "analog_titles": stats.titles[:5]}
+        prefill: dict[str, Any]
+        if offer_mode:
+            hints["range_amount"] = [_round2(min(stats.values)), _round2(max(stats.values))]
+            prefill = {"amount": _round2(median)}
+        else:
+            hints["range_pct"] = [
+                round(min(stats.values) * 100, 2),
+                round(max(stats.values) * 100, 2),
+            ]
+            prefill = {
+                "share_pct": round(median * 100, 2),
+                "amount": _round2(median * float(nmck or 0)),
+            }
+        out[canon] = {"hints": hints, "prefill": prefill}
+    return out
+
+
+def _editor_row(
+    row_state: dict[str, Any],
+    old_rows: list[dict[str, Any]],
+    *,
+    is_overhead: bool,
+    offer_mode: bool,
+    ref_price: float,
+    canon_medians: dict[str, dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    """Одна строка из состояния редактора -> строка payload (None — пропустить).
+
+    idx указывает на строку исходного payload (метаданные сохраняются), idx=None — новая.
+    touched — какое поле правил человек последним: оно первично, второе выводится.
+    """
+    name = str(row_state.get("name") or "").strip()
+    if not name:
+        return None
+    idx = row_state.get("idx")
+    existing = (
+        dict(old_rows[int(idx)]) if isinstance(idx, int) and 0 <= int(idx) < len(old_rows) else None
+    )
+    canon_raw = row_state.get("canon")
+    canon = str(canon_raw) if canon_raw and str(canon_raw) in CATALOG_BY_KEY else None
+    fallback_group = "overhead" if is_overhead else None
+    group = CATALOG_BY_KEY[canon].group if canon else fallback_group
+
+    if existing is not None:
+        line = existing
+        line["name"] = name
+        if canon != line.get("canon"):
+            line["canon"] = canon
+            line["canon_label"] = CATALOG_BY_KEY[canon].label if canon else None
+            line["group"] = group
+            line["n_analogs"] = 0
+            line["range_pct"] = None
+            line.pop("range_amount", None)
+            if canon and canon_medians and canon in canon_medians:
+                line.update(canon_medians[canon].get("hints", {}))
+    else:
+        line = {
+            "name": name,
+            "canon": canon,
+            "canon_label": CATALOG_BY_KEY[canon].label if canon else None,
+            "group": group,
+            "quote": "",
+            "note": "добавлено вручную",
+            "share_pct": None,
+            "amount": None,
+            "source": "user",
+            "n_analogs": 0,
+            "range_pct": None,
+            "analog_titles": [],
+        }
+        if canon and canon_medians and canon in canon_medians:
+            median = canon_medians[canon]
+            line.update(median.get("hints", {}))
+            # значение не введено — предзаполняем медианой аналогов
+            if row_state.get("amount") is None and row_state.get("share_pct") is None:
+                prefill = median.get("prefill", {})
+                if prefill:
+                    line.update(prefill)
+                    line["source"] = "analog"
+                    line["note"] = "медиана по аналогам (строка добавлена вручную)"
+
+    touched = row_state.get("touched")
+    amount = row_state.get("amount")
+    share_pct = row_state.get("share_pct")
+    # у новой строки «правкой» считается любое введённое значение
+    if existing is None and touched is None and (amount is not None or share_pct is not None):
+        touched = "amount" if amount is not None else "share_pct"
+
+    if touched == "amount" and amount is not None:
+        if offer_mode and is_overhead:
+            # накладные в режиме предложения задаются процентом (сумма зависит от цены)
+            if ref_price:
+                line["share_pct"] = round(float(amount) / ref_price * 100, 2)
+        else:
+            line["amount"] = _round2(float(amount))
+            line["share_pct"] = round(float(amount) / ref_price * 100, 2) if ref_price else None
+        line["source"] = "user"
+    elif touched == "share_pct" and share_pct is not None:
+        line["share_pct"] = round(float(share_pct), 2)
+        if not (offer_mode and is_overhead):
+            line["amount"] = _round2(float(share_pct) / 100 * ref_price) if ref_price else None
+        line["source"] = "user"
+    return line
+
+
+def apply_editor_state(
+    payload: dict[str, Any],
+    state: dict[str, Any],
+    canon_medians: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Полное состояние редактора -> новый payload (append-only версия расчёта).
+
+    state = {base: {nmck, object_kind, design_stage}, params: {min_margin_pct,
+    target_margin_pct}, lines: [...], overheads: [...]}. Строки без idx — новые,
+    отсутствующие в state строки payload — удалённые. canon_medians (по данным
+    аналогов из БД) даёт новым строкам с каноном подсказки и предзаполнение.
+    """
+    result: dict[str, Any] = dict(payload)
+    result["base"] = dict(payload.get("base", {}))
+    result["params"] = dict(payload.get("params", {}))
+    base = result["base"]
+
+    base_state = state.get("base") or {}
+    old_nmck = base.get("nmck")
+    if "nmck" in base_state:
+        new_nmck = base_state["nmck"]
+        base["nmck"] = _round2(float(new_nmck)) if new_nmck is not None else None
+        if base["nmck"] is None:
+            base["mode"] = "offer"
+        elif base.get("mode") == "offer":
+            base["mode"] = "full"
+    for key in ("object_kind", "design_stage"):
+        if base_state.get(key):
+            base[key] = str(base_state[key])
+
+    params_state = state.get("params") or {}
+    for key in ("min_margin_pct", "target_margin_pct"):
+        if params_state.get(key) is not None:
+            result["params"][key] = float(params_state[key])
+
+    offer_mode = base.get("nmck") is None
+    if base.get("nmck") is not None:
+        ref_price = float(base["nmck"])
+    else:
+        ref_price = float(payload.get("totals", {}).get("price") or 0.0)
+
+    old_lines = list(payload.get("lines", []))
+    old_overheads = list(payload.get("overheads", []))
+    result["lines"] = [
+        row
+        for row_state in state.get("lines", [])
+        if (
+            row := _editor_row(
+                row_state,
+                old_lines,
+                is_overhead=False,
+                offer_mode=offer_mode,
+                ref_price=ref_price,
+                canon_medians=canon_medians,
+            )
+        )
+        is not None
+    ]
+    result["overheads"] = [
+        row
+        for row_state in state.get("overheads", [])
+        if (
+            row := _editor_row(
+                row_state,
+                old_overheads,
+                is_overhead=True,
+                offer_mode=offer_mode,
+                ref_price=ref_price,
+                canon_medians=canon_medians,
+            )
+        )
+        is not None
+    ]
+
+    # НМЦК изменилась (режим тот же) — суммы разделов первичны, доли пересчитываем;
+    # накладные первичны процентом, сумма выводится. В offer-режиме всё сделает
+    # _recompute_offer.
+    nmck_changed = base.get("nmck") is not None and (
+        old_nmck is None or abs(float(base["nmck"]) - float(old_nmck)) > 0.004
+    )
+    if nmck_changed:
+        nmck = float(base["nmck"])
+        for line in result["lines"]:
+            amount = line.get("amount")
+            line["share_pct"] = round(float(amount) / nmck * 100, 2) if amount is not None else None
+        for line in result["overheads"]:
+            pct = line.get("share_pct")
+            if pct is not None:
+                line["amount"] = _round2(float(pct) / 100 * nmck)
+
+    _recompute_totals(result)
+    return result
+
+
 def _recompute_totals(payload: dict[str, Any]) -> None:
     """Итоги, сетки и предупреждения — из строк payload (in-place). Оба режима."""
     base = payload["base"]

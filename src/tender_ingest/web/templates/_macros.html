@@ -13,6 +13,12 @@
 </div>
 {% endmacro %}
 
+{% macro cite(f) %}
+  {% if f and f.quote %}
+  <blockquote class="mt-1 pl-3 border-l-2 border-slate-200 text-[13px] text-slate-500 italic">«{{ f.quote }}»{% if f.page %} <span class="not-italic text-slate-400">— стр. {{ f.page }}</span>{% endif %}</blockquote>
+  {% endif %}
+{% endmacro %}
+
 {% macro verdict_badge(verdict) %}
   {% set styles = {
     'relevant': 'bg-emerald-100 text-emerald-800',

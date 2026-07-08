@@ -11,8 +11,10 @@ from tender_ingest.economics.engine import (
     OverheadInput,
     Params,
     SectionInput,
+    apply_editor_state,
     apply_edits,
     build_payload,
+    canon_median_hints,
     overhead_history_ranges,
 )
 from tender_ingest.economics.sbcp import sbcp_weights
@@ -211,6 +213,105 @@ def test_apply_edits_recomputes() -> None:
     # повторный пересчёт не дублирует предупреждения
     again = apply_edits(edited, {})
     assert len(again["warnings"]) == len(edited["warnings"])
+
+
+def _editor_rows(payload: dict, bucket: str) -> list[dict]:
+    """Состояние редактора «как есть» из payload (без правок)."""
+    return [
+        {
+            "idx": i,
+            "name": line["name"],
+            "canon": line.get("canon"),
+            "amount": line.get("amount"),
+            "share_pct": line.get("share_pct"),
+            "touched": None,
+        }
+        for i, line in enumerate(payload[bucket])
+    ]
+
+
+def test_apply_editor_state_edit_delete_rename() -> None:
+    base, sections, overheads, analogs = _base_inputs()
+    payload = build_payload(
+        base=base, sections=sections, overheads=overheads, analogs=analogs, all_projects=analogs
+    )
+    lines = _editor_rows(payload, "lines")
+    lines[0]["name"] = "ПЗУ (переименовано)"
+    lines[1]["amount"] = 700_000.0
+    lines[1]["touched"] = "amount"
+    del lines[2]  # удаляем строку без данных
+    state = {"lines": lines, "overheads": _editor_rows(payload, "overheads")}
+    edited = apply_editor_state(payload, state)
+
+    assert len(edited["lines"]) == 2
+    assert edited["lines"][0]["name"] == "ПЗУ (переименовано)"
+    assert edited["lines"][0]["source"] == "analog"  # переименование не трогает значения
+    assert edited["lines"][1]["amount"] == 700_000.0
+    assert edited["lines"][1]["share_pct"] == 7.0  # от НМЦК 10 млн
+    assert edited["lines"][1]["source"] == "user"
+    assert edited["totals"]["cost"] == round(
+        sum(
+            line["amount"]
+            for line in edited["lines"] + edited["overheads"]
+            if line["amount"] is not None
+        ),
+        2,
+    )
+
+
+def test_apply_editor_state_add_row_with_canon_prefill() -> None:
+    base, sections, overheads, analogs = _base_inputs()
+    payload = build_payload(
+        base=base, sections=sections, overheads=overheads, analogs=analogs, all_projects=analogs
+    )
+    medians = canon_median_hints(analogs, nmck=10_000_000.0)
+    lines = _editor_rows(payload, "lines")
+    lines.append({"idx": None, "name": "Генплан доп.", "canon": "pzu", "amount": None,
+                  "share_pct": None, "touched": None})
+    lines.append({"idx": None, "name": "Своя строка", "canon": None, "amount": 100_000.0,
+                  "share_pct": None, "touched": None})
+    state = {"lines": lines, "overheads": _editor_rows(payload, "overheads")}
+    edited = apply_editor_state(payload, state, canon_medians=medians)
+
+    prefilled = edited["lines"][-2]
+    assert prefilled["source"] == "analog"  # медиана pzu = 3% от 10 млн
+    assert prefilled["share_pct"] == 3.0
+    assert prefilled["amount"] == 300_000.0
+    manual = edited["lines"][-1]
+    assert manual["source"] == "user"
+    assert manual["amount"] == 100_000.0
+    assert manual["share_pct"] == 1.0
+
+
+def test_apply_editor_state_nmck_change_and_offer_switch() -> None:
+    base, sections, overheads, analogs = _base_inputs()
+    payload = build_payload(
+        base=base, sections=sections, overheads=overheads, analogs=analogs, all_projects=analogs
+    )
+    state = {
+        "lines": _editor_rows(payload, "lines"),
+        "overheads": _editor_rows(payload, "overheads"),
+        "base": {"nmck": 5_000_000.0},
+    }
+    edited = apply_editor_state(payload, state)
+    # суммы разделов первичны: доля пересчитана от новой НМЦК
+    line0 = edited["lines"][0]
+    assert line0["share_pct"] == round(line0["amount"] / 5_000_000.0 * 100, 2)
+    # накладные первичны процентом: сумма пересчитана
+    oh0 = edited["overheads"][0]
+    assert oh0["amount"] == round(oh0["share_pct"] / 100 * 5_000_000.0, 2)
+    assert edited["totals"]["price"] == 5_000_000.0
+
+    # очистили НМЦК -> режим предложения от себестоимости
+    state2 = {
+        "lines": _editor_rows(edited, "lines"),
+        "overheads": _editor_rows(edited, "overheads"),
+        "base": {"nmck": None},
+    }
+    offered = apply_editor_state(edited, state2)
+    assert offered["base"]["mode"] == "offer"
+    assert offered["totals"]["mode"] == "offer"
+    assert offered["totals"]["price"] > 0
 
 
 def test_overhead_history_ranges_fallback() -> None:

@@ -1,4 +1,4 @@
-"""Экономика тендера: запуск расчёта ИИ, правки строк, рекомендации ревью, экспорт."""
+"""Экономика тендера: запуск расчёта ИИ, редактор с живым пересчётом, ревью, экспорт."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from tender_ingest.db.session import get_session_factory
-from tender_ingest.economics.engine import apply_edits
+from tender_ingest.economics.engine import apply_editor_state, apply_edits, canon_median_hints
 from tender_ingest.economics.export import build_economics_xlsx
 from tender_ingest.economics.store import EconomicsStore
 from tender_ingest.web.economics_job import job as eco_job
@@ -102,53 +102,113 @@ def economics_status(request: Request, reestr_number: str) -> JSONResponse:
     return JSONResponse({"running": True, "progress": progress, "eta": eta, "phase": s.phase})
 
 
-def _changed(current: object, new: float | None) -> bool:
-    if new is None:
-        return False
-    if current is None:
-        return True
-    return abs(float(str(current)) - new) > 0.004
+def _parse_editor_state(raw: dict[str, Any]) -> dict[str, Any]:
+    """Санитизация состояния редактора из браузера: числа, idx, touched."""
+
+    def rows(items: object) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            idx = item.get("idx")
+            touched = item.get("touched")
+            out.append(
+                {
+                    "idx": int(idx) if isinstance(idx, int | float) and idx is not None else None,
+                    "name": str(item.get("name") or ""),
+                    "canon": str(item["canon"]) if item.get("canon") else None,
+                    "amount": _to_float(item.get("amount")),
+                    "share_pct": _to_float(item.get("share_pct")),
+                    "touched": touched if touched in ("amount", "share_pct") else None,
+                }
+            )
+        return out
+
+    base_any = raw.get("base")
+    base_raw: dict[str, Any] = base_any if isinstance(base_any, dict) else {}
+    params_any = raw.get("params")
+    params_raw: dict[str, Any] = params_any if isinstance(params_any, dict) else {}
+    state: dict[str, Any] = {
+        "lines": rows(raw.get("lines")),
+        "overheads": rows(raw.get("overheads")),
+        "base": {
+            "object_kind": str(base_raw.get("object_kind") or "") or None,
+            "design_stage": str(base_raw.get("design_stage") or "") or None,
+        },
+        "params": {
+            "min_margin_pct": _to_float(params_raw.get("min_margin_pct")),
+            "target_margin_pct": _to_float(params_raw.get("target_margin_pct")),
+        },
+    }
+    if "nmck" in base_raw:  # ключ есть -> НМЦК правили (None = очистили, режим предложения)
+        state["base"]["nmck"] = _to_float(base_raw.get("nmck"))
+    return state
 
 
-@router.post("/tender/{reestr_number}/economics/{calc_id}/edit")
-async def edit_economics(request: Request, reestr_number: str, calc_id: int) -> RedirectResponse:
-    """Правки человека: изменённые суммы/доли -> пересчёт итогов -> новая версия."""
-    form = await request.form()
+def _editor_payload(
+    session_store: EconomicsStore, payload: dict[str, Any], state: dict[str, Any]
+) -> dict[str, Any]:
+    """Применить состояние редактора: медианы канонов по аналогам расчёта -> движок."""
+    analog_ids = {a.get("id") for a in payload.get("analogs", [])}
+    analogs = [p for p in session_store.analog_projects() if p.id in analog_ids]
+    nmck = state.get("base", {}).get("nmck", payload.get("base", {}).get("nmck"))
+    medians = canon_median_hints(analogs, nmck=nmck) if analogs else {}
+    return apply_editor_state(payload, state, canon_medians=medians)
+
+
+@router.post("/tender/{reestr_number}/economics/{calc_id}/preview")
+async def preview_economics(request: Request, reestr_number: str, calc_id: int) -> JSONResponse:
+    """Живой пересчёт для редактора: состояние -> новый payload БЕЗ сохранения."""
+    raw = await request.json()
+    with get_session_factory()() as session:
+        store = EconomicsStore(session)
+        calc = store.get(reestr_number, calc_id)
+        if calc is None:
+            return JSONResponse({"error": "Расчёт не найден"}, status_code=404)
+        new_payload = _editor_payload(store, dict(calc.payload), _parse_editor_state(raw))
+    return JSONResponse({"payload": new_payload})
+
+
+@router.post("/tender/{reestr_number}/economics/{calc_id}/save")
+async def save_economics(request: Request, reestr_number: str, calc_id: int) -> JSONResponse:
+    """Сохранить состояние редактора новой версией (append-only). НМЦК -> в тендер."""
+    raw = await request.json()
+    state = _parse_editor_state(raw)
+    with get_session_factory()() as session:
+        store = EconomicsStore(session)
+        calc = store.get(reestr_number, calc_id)
+        if calc is None:
+            return JSONResponse({"error": "Расчёт не найден"}, status_code=404)
+        new_payload = _editor_payload(store, dict(calc.payload), state)
+        new_nmck = new_payload.get("base", {}).get("nmck")
+        found = WebRepository(session).get(reestr_number)
+        if found is not None and new_nmck is not None:
+            tender = found[0]
+            if tender.nmck is None or abs(float(tender.nmck) - float(new_nmck)) > 0.004:
+                tender.nmck = Decimal(str(new_nmck))
+                tender.currency = tender.currency or "RUB"
+                session.add(tender)
+        store.add_calculation(reestr_number, created_by="user", model=None, payload=new_payload)
+    return JSONResponse(
+        {"ok": True, "redirect": f"/tender/{reestr_number}?{_MSG_SAVED}#economics"}
+    )
+
+
+_MSG_SAVED = urlencode({"msg": "Правки сохранены, итоги пересчитаны (новая версия)"})
+
+
+@router.post("/tender/{reestr_number}/economics/{calc_id}/restore")
+def restore_economics(request: Request, reestr_number: str, calc_id: int) -> RedirectResponse:
+    """Откат: выбранная версия копируется наверх новой версией (история не трогается)."""
     with get_session_factory()() as session:
         store = EconomicsStore(session)
         calc = store.get(reestr_number, calc_id)
         if calc is None:
             return _detail(reestr_number, "Расчёт не найден")
-        payload: dict[str, Any] = dict(calc.payload)
-
-        edits: dict[str, dict[str, float | None]] = {}
-        buckets = {"l": list(payload.get("lines", [])), "o": list(payload.get("overheads", []))}
-        for prefix, lines in buckets.items():
-            for i, line in enumerate(lines):
-                amount = _to_float(form.get(f"amount_{prefix}{i}"))
-                share = _to_float(form.get(f"share_{prefix}{i}"))
-                if _changed(line.get("amount"), amount):
-                    edits[f"{prefix}{i}"] = {"amount": amount}
-                elif _changed(line.get("share_pct"), share):
-                    edits[f"{prefix}{i}"] = {"share_pct": share}
-
-        margin = _to_float(form.get("min_margin_pct"))
-        current_margin = float(payload.get("params", {}).get("min_margin_pct", 0.0))
-        margin_changed = margin is not None and abs(margin - current_margin) > 0.004
-        target = _to_float(form.get("target_margin_pct"))
-        current_target = float(payload.get("params", {}).get("target_margin_pct", 0.0))
-        target_changed = target is not None and abs(target - current_target) > 0.004
-        if not edits and not margin_changed and not target_changed:
-            return _detail(reestr_number, "Изменений нет — расчёт не пересохранён")
-
-        new_payload = apply_edits(
-            payload,
-            edits,
-            min_margin_pct=margin if margin_changed else None,
-            target_margin_pct=target if target_changed else None,
+        store.add_calculation(
+            reestr_number, created_by="user", model=calc.model, payload=dict(calc.payload)
         )
-        store.add_calculation(reestr_number, created_by="user", model=None, payload=new_payload)
-    return _detail(reestr_number, "Правки сохранены, итоги пересчитаны (новая версия)")
+    return _detail(reestr_number, f"Версия №{calc_id} восстановлена (скопирована новой версией)")
 
 
 @router.post("/tender/{reestr_number}/economics/{calc_id}/apply-review")

@@ -25,7 +25,7 @@ def _detail(reestr_number: str, msg: str | None = None) -> RedirectResponse:
     target = f"/tender/{reestr_number}"
     if msg:
         target += f"?{urlencode({'msg': msg})}"
-    return RedirectResponse(target, status_code=303)
+    return RedirectResponse(target + "#docs", status_code=303)
 
 
 @router.post("/tender/{reestr_number}/documents")

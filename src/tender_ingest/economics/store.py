@@ -180,6 +180,18 @@ class EconomicsStore:
             )
         ).scalar_one_or_none()
 
+    def list_versions(self, reestr_number: str) -> list[TenderEconomics]:
+        """Все версии расчёта по тендеру, новые сверху (для истории в редакторе)."""
+        return list(
+            self.session.execute(
+                select(TenderEconomics)
+                .where(TenderEconomics.reestr_number == reestr_number)
+                .order_by(TenderEconomics.created_at.desc(), TenderEconomics.id.desc())
+            )
+            .scalars()
+            .all()
+        )
+
 
 def contract_scale_note(contract_total: Decimal | float | None) -> str:
     """Человекочитаемый масштаб цены для промпта («8.0 млн ₽»)."""

@@ -21,11 +21,13 @@ from tender_ingest.web.tracking import PARTICIPATION_STATUSES, TrackingRepositor
 router = APIRouter(dependencies=[Depends(require_auth)])
 
 
-def _detail(reestr_number: str, msg: str | None = None) -> RedirectResponse:
+def _detail(
+    reestr_number: str, msg: str | None = None, anchor: str = "#tracking"
+) -> RedirectResponse:
     target = f"/tender/{reestr_number}"
     if msg:
         target += f"?{urlencode({'msg': msg})}"
-    return RedirectResponse(target, status_code=303)
+    return RedirectResponse(target + anchor, status_code=303)
 
 
 def _clean(s: str | None) -> str | None:
@@ -56,7 +58,9 @@ def _date(s: str | None) -> dt.date | None:
 def toggle_favorite(request: Request, reestr_number: str) -> RedirectResponse:
     with get_session_factory()() as session:
         now_fav = TrackingRepository(session).toggle_favorite(reestr_number)
-    return _detail(reestr_number, "Добавлено в избранное" if now_fav else "Убрано из избранного")
+    return _detail(
+        reestr_number, "Добавлено в избранное" if now_fav else "Убрано из избранного", anchor=""
+    )
 
 
 @router.post("/tender/{reestr_number}/participation")

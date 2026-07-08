@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 
 from tender_ingest.db.session import get_session_factory
 from tender_ingest.documents.prompt import FIELD_LABELS
+from tender_ingest.economics.canon import CATALOG
 from tender_ingest.economics.store import EconomicsStore
 from tender_ingest.web.doc_analysis_job import job as doc_analysis_job
 from tender_ingest.web.economics_job import job as economics_job
@@ -88,7 +89,9 @@ def index(  # noqa: PLR0913 — плоский разбор query-парамет
 
 
 @router.get("/tender/{reestr_number}", response_class=HTMLResponse)
-def detail(request: Request, reestr_number: str, msg: str | None = None) -> HTMLResponse:
+def detail(
+    request: Request, reestr_number: str, msg: str | None = None, calc: int | None = None
+) -> HTMLResponse:
     with get_session_factory()() as session:
         found = WebRepository(session).get(reestr_number)
         if found is None:
@@ -106,8 +109,22 @@ def detail(request: Request, reestr_number: str, msg: str | None = None) -> HTML
         notes = tracking.list_notes(reestr_number)
 
         eco_store = EconomicsStore(session)
-        economics = eco_store.latest_for(reestr_number)
+        eco_versions = eco_store.list_versions(reestr_number)
+        latest = eco_versions[0] if eco_versions else None
+        # ?calc=<id> — просмотр старой версии в редакторе (кнопка «Восстановить»)
+        economics = latest
+        if calc is not None:
+            selected = next((v for v in eco_versions if v.id == calc), None)
+            economics = selected or latest
+        eco_is_latest = economics is not None and latest is not None and economics.id == latest.id
         kb_size = eco_store.knowledge_base_size()
+
+        deadline_days = None
+        if tender.submission_deadline is not None:
+            deadline = tender.submission_deadline
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=dt.UTC)
+            deadline_days = (deadline - dt.datetime.now(dt.UTC)).days
 
         dj = doc_analysis_job.snapshot()
         doc_job_msg = None
@@ -142,9 +159,13 @@ def detail(request: Request, reestr_number: str, msg: str | None = None) -> HTML
                 "doc_job": dj,
                 "doc_job_msg": doc_job_msg,
                 "economics": economics,
+                "eco_versions": eco_versions,
+                "eco_is_latest": eco_is_latest,
+                "eco_catalog": CATALOG,
                 "eco_kb_size": kb_size,
                 "eco_job": ej,
                 "eco_job_msg": eco_job_msg,
+                "deadline_days": deadline_days,
                 "is_favorite": is_favorite,
                 "participation": participation,
                 "notes": notes,

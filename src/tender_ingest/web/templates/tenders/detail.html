@@ -1,12 +1,6 @@
 {% extends "base.html" %}
-{% from "_macros.html" import verdict_badge, score_pill, progress_bar %}
+{% from "_macros.html" import verdict_badge, score_pill %}
 {% block title %}{{ (t.subject or t.reestr_number)[:60] }}{% endblock %}
-
-{% macro cite(f) %}
-  {% if f and f.quote %}
-  <blockquote class="mt-1 pl-3 border-l-2 border-slate-200 text-[13px] text-slate-500 italic">«{{ f.quote }}»{% if f.page %} <span class="not-italic text-slate-400">— стр. {{ f.page }}</span>{% endif %}</blockquote>
-  {% endif %}
-{% endmacro %}
 
 {% block content %}
 
@@ -22,6 +16,7 @@
 
 <a href="javascript:history.back()" class="text-sm text-slate-500 hover:text-slate-800">← к списку</a>
 
+{# --- Шапка: всегда видимая сводка — вердикт ИИ, сроки, деньги, участие --- #}
 <div class="bg-white rounded-lg border border-slate-200 p-6 mt-3">
   <div class="flex items-start justify-between gap-3">
     <h1 class="text-lg font-semibold leading-snug text-slate-900">{{ t.subject or '(без названия)' }}</h1>
@@ -38,545 +33,90 @@
     · <a href="https://zakupki.gov.ru/epz/order/extendedsearch/results.html?searchString={{ t.reestr_number }}"
        target="_blank" rel="noopener" class="text-slate-500 hover:underline">открыть в ЕИС ↗</a>
     {% endif %}
+    {% if t.customer_name %} · {{ t.customer_name[:80] }}{% endif %}
   </div>
-</div>
 
-{% if rel %}
-<div class="bg-white rounded-lg border border-slate-200 p-6 mt-4">
-  <div class="flex items-center gap-3 mb-4">
-    {{ score_pill(rel.score) }}
-    {{ verdict_badge(rel.verdict) }}
-    <span class="text-sm font-medium text-slate-700">Анализ ИИ</span>
-    <span class="text-xs text-slate-400 ml-auto">
-      {% if rel.confidence is not none %}уверенность: {{ rel.confidence }} · {% endif %}оценка: {{ rel.decided_by }}
-    </span>
-  </div>
-  {% if rel.summary %}
-  <p class="text-[15px] leading-7 text-slate-700">{{ rel.summary }}</p>
-  {% endif %}
-
-  {% if rel.red_flags %}
-  <div class="mt-4">
-    <div class="text-xs font-semibold text-red-700 mb-1.5">Риски</div>
-    <ul class="space-y-1">
-      {% for flag in rel.red_flags %}
-      <li class="text-[13px] leading-6 text-red-800 bg-red-50 border border-red-100 rounded-md px-2.5 py-1">⚑ {{ flag }}</li>
-      {% endfor %}
-    </ul>
-  </div>
-  {% endif %}
-
-  {% if rel.reasoning %}
-  <div class="mt-4">
-    <div class="text-xs font-semibold text-slate-500 mb-1.5">Обоснование ИИ</div>
-    <p class="text-[14px] leading-7 text-slate-600 whitespace-pre-line">{{ rel.reasoning }}</p>
-  </div>
-  {% endif %}
-
-  {% set fx = rel.factors or {} %}
-  {% if fx %}
-  <div class="flex flex-wrap gap-1.5 mt-4 pt-4 border-t border-slate-100">
-    {% macro chip(ok, text) %}<span class="px-2.5 py-1 rounded-md text-xs border {{ 'bg-emerald-50 text-emerald-700 border-emerald-200' if ok else 'bg-slate-50 text-slate-500 border-slate-200' }}">{{ text }}</span>{% endmacro %}
-    {{ chip(fx.law == '44-ФЗ', 'закон: ' ~ (fx.law or '—')) }}
-    {{ chip(fx.method_kind == 'конкурс', 'способ: ' ~ (fx.method_kind or '—')) }}
-    {{ chip(fx.has_advance, 'аванс: ' ~ ('есть' if fx.has_advance else 'нет')) }}
-    {{ chip(fx.nmck_in_band, 'НМЦ 2–150 млн' if fx.nmck_in_band else 'НМЦ вне диапазона') }}
-    {{ chip(fx.region_priority, 'регион: ' ~ ('приоритетный' if fx.region_priority else 'иной')) }}
-  </div>
-  {% endif %}
-</div>
-{% else %}
-<div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mt-4 text-sm text-amber-800">
-  Закупка ещё не оценена ИИ. Нажмите «Оценить ИИ» на <a href="/" class="underline">списке</a>.
-</div>
-{% endif %}
-
-<div class="grid md:grid-cols-2 gap-4 mt-4">
-  <div class="bg-white rounded-lg border border-slate-200 p-6">
-    <h2 class="text-sm font-semibold text-slate-500 mb-3">Закупка</h2>
-    <dl class="text-sm space-y-1.5">
-      {% macro row(k, v) %}<div class="flex justify-between gap-4"><dt class="text-slate-500">{{ k }}</dt><dd class="text-right">{{ v }}</dd></div>{% endmacro %}
-      {{ row('НМЦ', t.nmck | money(t.currency)) }}
-      {{ row('Способ отбора', t.purchase_method or '—') }}
-      {{ row('Этап', t.stage or '—') }}
-      {{ row('ЭТП', t.etp or '—') }}
-      {{ row('СМП/СОНО', t.smp_sono or '—') }}
-      {{ row('Аванс', t.advance_raw or '—') }}
-      {{ row('Опубликовано', t.publish_date | date_ru(true)) }}
-      {{ row('Дедлайн заявок', t.submission_deadline | date_ru(true)) }}
-    </dl>
-  </div>
-  <div class="bg-white rounded-lg border border-slate-200 p-6">
-    <h2 class="text-sm font-semibold text-slate-500 mb-3">Заказчик</h2>
-    <dl class="text-sm space-y-1.5">
-      {{ row('Название', t.customer_name or '—') }}
-      {{ row('ИНН', t.customer_inn or '—') }}
-      {{ row('КПП', t.customer_kpp or '—') }}
-      {{ row('Регион', (t.region_code or '') ~ ' ' ~ (t.region_name or '')) }}
-      {{ row('Место поставки', t.delivery_place or '—') }}
-    </dl>
-  </div>
-</div>
-
-<!-- Участие бюро + заметки: «человеческий» слой RAG -->
-<div class="grid md:grid-cols-2 gap-4 mt-4">
-  <div class="bg-white rounded-lg border border-slate-200 p-6">
-    <h2 class="text-sm font-semibold text-slate-500 mb-3">Участие бюро</h2>
-    <form action="/tender/{{ t.reestr_number }}/participation" method="post" class="space-y-2.5 text-sm">
-      <select name="status" class="w-full border border-slate-300 rounded-md px-2 py-1.5">
-        <option value="">— не участвуем —</option>
-        {% for code, label in status_labels.items() %}
-        <option value="{{ code }}" {{ 'selected' if participation and participation.status == code }}>{{ label }}</option>
-        {% endfor %}
-      </select>
-      <div class="grid grid-cols-2 gap-2">
-        <input name="our_price" placeholder="наша цена, ₽" value="{{ participation.our_price if participation and participation.our_price is not none else '' }}"
-               class="border border-slate-300 rounded-md px-2 py-1.5">
-        <input name="winner_price" placeholder="цена победителя, ₽" value="{{ participation.winner_price if participation and participation.winner_price is not none else '' }}"
-               class="border border-slate-300 rounded-md px-2 py-1.5">
-      </div>
-      <input type="date" name="decided_at" value="{{ participation.decided_at.isoformat() if participation and participation.decided_at else '' }}"
-             class="w-full border border-slate-300 rounded-md px-2 py-1.5">
-      <textarea name="comment" rows="2" placeholder="комментарий к участию (почему выиграли/проиграли — попадёт в RAG)"
-                class="w-full border border-slate-300 rounded-md px-2 py-1.5">{{ participation.comment or '' if participation else '' }}</textarea>
-      <button class="bg-slate-900 text-white rounded-md px-3 py-1.5 text-sm hover:bg-slate-700">Сохранить участие</button>
-      {% if t.nmck and participation and participation.winner_price %}
-      <span class="text-xs text-slate-400 ml-2">снижение от НМЦ: {{ ((1 - participation.winner_price / t.nmck) * 100) | round(1) }}%</span>
-      {% endif %}
-    </form>
-  </div>
-  <div class="bg-white rounded-lg border border-slate-200 p-6">
-    <h2 class="text-sm font-semibold text-slate-500 mb-3">Заметки бюро</h2>
-    <form action="/tender/{{ t.reestr_number }}/notes" method="post" class="flex gap-2 mb-3">
-      <input name="text" required placeholder="знание, которого нет в полях — попадёт в промпт ИИ дословно"
-             class="flex-1 border border-slate-300 rounded-md px-2 py-1.5 text-sm">
-      <button class="bg-slate-100 border border-slate-300 rounded-md px-3 py-1.5 text-sm hover:bg-slate-200">Добавить</button>
-    </form>
-    {% if notes %}
-    <ul class="space-y-2">
-      {% for n in notes %}
-      <li class="flex items-start justify-between gap-2 bg-slate-50 border border-slate-100 rounded-md px-2.5 py-1.5">
-        <div>
-          <div class="text-[13px] leading-6 text-slate-700">{{ n.text }}</div>
-          <div class="text-[11px] text-slate-400">{{ n.created_at | date_ru(true) }}</div>
-        </div>
-        <form action="/tender/{{ t.reestr_number }}/notes/{{ n.id }}/delete" method="post"
-              onsubmit="return confirm('Удалить заметку?')">
-          <button class="text-slate-300 hover:text-red-600 text-xs">✕</button>
-        </form>
-      </li>
-      {% endfor %}
-    </ul>
+  <div class="flex flex-wrap items-center gap-2.5 mt-3.5">
+    {% if rel %}
+    <span class="inline-flex items-center gap-1.5">{{ score_pill(rel.score) }}{{ verdict_badge(rel.verdict) }}</span>
     {% else %}
-    <p class="text-xs text-slate-400">Заметок нет.</p>
+    <span class="px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-400">не оценён ИИ</span>
+    {% endif %}
+
+    {% if t.submission_deadline %}
+    {% set urgent = deadline_days is not none and deadline_days < 3 %}
+    {% set soon = deadline_days is not none and 3 <= deadline_days < 7 %}
+    <span class="px-2.5 py-1 rounded-md text-xs font-medium border
+      {{ 'bg-red-50 text-red-800 border-red-200' if urgent else 'bg-amber-50 text-amber-800 border-amber-200' if soon else 'bg-slate-50 text-slate-600 border-slate-200' }}">
+      дедлайн {{ t.submission_deadline | date_ru }}{% if deadline_days is not none %}{% if deadline_days < 0 %} · истёк{% else %} · осталось {{ deadline_days }} дн.{% endif %}{% endif %}
+    </span>
+    {% endif %}
+
+    <span class="px-2.5 py-1 rounded-md text-xs border bg-slate-50 text-slate-600 border-slate-200">
+      НМЦ: {{ t.nmck | money(t.currency) }}
+    </span>
+
+    {% if economics and economics.payload.totals %}
+    <a href="#economics" class="px-2.5 py-1 rounded-md text-xs border bg-indigo-50 text-indigo-800 border-indigo-200 hover:bg-indigo-100">
+      себестоимость {{ economics.payload.totals.cost | money('₽') }}{% if economics.payload.totals.margin_pct is not none %} · маржа {{ economics.payload.totals.margin_pct }}%{% endif %}
+    </a>
+    {% endif %}
+
+    {% if participation and participation.status %}
+    <span class="px-2.5 py-1 rounded-md text-xs border bg-emerald-50 text-emerald-800 border-emerald-200">
+      {{ status_labels.get(participation.status, participation.status) }}
+    </span>
+    {% endif %}
+
+    {% if rel and rel.red_flags %}
+    <span class="px-2.5 py-1 rounded-md text-xs border bg-red-50 text-red-800 border-red-200" title="{{ rel.red_flags | join('; ') }}">
+      ⚑ рисков: {{ rel.red_flags | length }}
+    </span>
     {% endif %}
   </div>
 </div>
 
-<!-- Документы по тендеру + разбор ТЗ через ИИ -->
-<div class="bg-white rounded-lg border border-slate-200 p-6 mt-4">
-  <h2 class="text-sm font-semibold text-slate-500 mb-3">Документы и разбор ТЗ</h2>
-  {% if documents %}
-  <div class="space-y-4 mb-4">
-    {% for d in documents %}
-    {% set a = analyses.get(d.id) %}
-    <div class="border border-slate-200 rounded-lg p-3">
-      <div class="flex items-center justify-between gap-3 text-sm">
-        <a href="/tender/{{ t.reestr_number }}/documents/{{ d.id }}" class="text-slate-800 hover:underline truncate">📄 {{ d.filename }}</a>
-        <div class="flex items-center gap-3 shrink-0 text-xs text-slate-400">
-          <span>{% if d.size_bytes < 1048576 %}{{ (d.size_bytes / 1024) | round | int }} КБ{% else %}{{ (d.size_bytes / 1048576) | round(1) }} МБ{% endif %}</span>
-          <span>{{ d.uploaded_at | date_ru }}</span>
-          {% if doc_job and doc_job.running and doc_job.doc_id == d.id %}
-          {# бар рисуется ниже, на всю ширину карточки документа #}
-          {% elif doc_job and doc_job.running %}
-          <button class="text-slate-300 font-medium cursor-not-allowed" disabled
-                  title="Идёт разбор другого документа — дождитесь завершения">Разобрать ТЗ</button>
-          {% else %}
-          <form action="/tender/{{ t.reestr_number }}/documents/{{ d.id }}/analyze" method="post"
-                onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Запускаю…';">
-            <button class="text-indigo-600 hover:text-indigo-800 font-medium disabled:opacity-60">{{ 'Разобрать заново' if a else 'Разобрать ТЗ' }}</button>
-          </form>
-          {% endif %}
-          <form action="/tender/{{ t.reestr_number }}/documents/{{ d.id }}/delete" method="post"
-                onsubmit="return confirm('Удалить {{ d.filename }}?')">
-            <button class="text-slate-400 hover:text-red-600">удалить</button>
-          </form>
-        </div>
-      </div>
-
-      {% if doc_job and doc_job.running and doc_job.doc_id == d.id %}
-      <div class="mt-3">{{ progress_bar('doc-progress', doc_job.phase or 'Разбираю ТЗ…') }}</div>
-      {% endif %}
-
-      {% if a %}
-      <div class="mt-3 pt-3 border-t border-slate-100">
-        <div class="flex items-center justify-between gap-3 mb-2">
-          <div class="text-xs text-slate-400">
-            Разбор ИИ · {{ a.created_at | date_ru(true) }}{% if a.pages %} · {{ a.pages }} стр.{% endif %}{% if a.truncated %} · текст обрезан по объёму{% endif %}
-          </div>
-          <a href="/tender/{{ t.reestr_number }}/documents/{{ d.id }}/analysis.pdf"
-             class="text-xs text-indigo-600 hover:text-indigo-800 font-medium shrink-0">↓ Скачать PDF-отчёт</a>
-        </div>
-        {% if a.brief.summary %}<p class="text-[14px] leading-7 text-slate-700 mb-3">{{ a.brief.summary }}</p>{% endif %}
-        <dl class="space-y-2.5">
-          {% for key, label in field_labels %}
-          {% set f = a.brief.get(key) %}
-          {% if f and (f.value or f.quote) %}
-          <div>
-            <dt class="text-xs font-semibold text-slate-500">{{ label }}</dt>
-            <dd class="text-[14px] text-slate-700">{{ f.value or '—' }}</dd>
-            {{ cite(f) }}
-          </div>
-          {% endif %}
-          {% endfor %}
-        </dl>
-        {% if a.brief.work_breakdown %}
-        <div class="mt-3">
-          <div class="text-xs font-semibold text-slate-500 mb-1.5">Состав работ (основа расчёта экономики)</div>
-          <div class="space-y-1">
-            {% for w in a.brief.work_breakdown %}
-            <div class="text-[13px] leading-6 text-slate-700 bg-slate-50 border border-slate-100 rounded-md px-2.5 py-1">
-              <span class="font-medium">{{ w.name }}</span>
-              {% if w.stage and w.stage != 'не указано' %}<span class="text-slate-400"> · {{ w.stage }}</span>{% endif %}
-              {% if w.detail %}<span class="text-slate-500"> — {{ w.detail }}</span>{% endif %}
-            </div>
-            {% endfor %}
-          </div>
-        </div>
-        {% endif %}
-        {% if a.brief.findings %}
-        <div class="mt-3">
-          <div class="text-xs font-semibold text-slate-500 mb-1.5">Прочие важные находки</div>
-          <div class="space-y-2">
-            {% for fnd in a.brief.findings %}
-            <div class="bg-slate-50 border border-slate-100 rounded-md px-2.5 py-2">
-              <div class="text-[14px] font-medium text-slate-800">{{ fnd.title }}</div>
-              {% if fnd.detail %}<div class="text-[13px] text-slate-600 mt-0.5">{{ fnd.detail }}</div>{% endif %}
-              {{ cite(fnd) }}
-            </div>
-            {% endfor %}
-          </div>
-        </div>
-        {% endif %}
-      </div>
-      {% endif %}
-    </div>
-    {% endfor %}
-  </div>
-  {% else %}
-  <p class="text-sm text-slate-400 mb-4">Пока нет файлов. Загрузите ТЗ (PDF, DOCX или XLSX) и нажмите «Разобрать ТЗ» — ИИ вытянет площадь, категорию опасности, сроки, экспертизу, BIM и прочее с цитатами.</p>
-  {% endif %}
-
-  {% if doc_job and doc_job.running and doc_job.doc_id in (documents | map(attribute='id') | list) %}
-  <script>
-  craftProgressPoll('/tender/{{ t.reestr_number }}/documents/{{ doc_job.doc_id }}/analysis-status', 'doc-progress', 3000);
-  </script>
-  {% endif %}
-
-  <form action="/tender/{{ t.reestr_number }}/documents" method="post" enctype="multipart/form-data"
-        class="flex flex-wrap items-center gap-3">
-    <input type="file" name="file" required
-           class="text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-slate-900 file:text-white hover:file:bg-slate-700">
-    <button class="bg-slate-100 border border-slate-300 rounded-md px-3 py-1.5 text-sm hover:bg-slate-200">Загрузить файл</button>
-    <span class="text-xs text-slate-400">до 50 МБ. Разбор ИИ — PDF, DOCX, XLSX.</span>
-  </form>
+{# --- Вкладки --- #}
+<div class="flex gap-1 mt-4 border-b border-slate-200" id="tabs">
+  {% macro tab(key, label) %}
+  <button type="button" data-tab="{{ key }}"
+          class="px-4 py-2 text-sm font-medium rounded-t-md border border-b-0 border-transparent text-slate-500 hover:text-slate-800">{{ label }}</button>
+  {% endmacro %}
+  {{ tab('overview', 'Обзор') }}
+  {{ tab('docs', 'ТЗ и документы' ~ (' (' ~ (documents | length) ~ ')' if documents else '')) }}
+  {{ tab('economics', 'Экономика' ~ (' ✓' if economics else '')) }}
+  {{ tab('tracking', 'Участие и заметки' ~ (' (' ~ (notes | length) ~ ')' if notes else '')) }}
 </div>
 
-<!-- Экономика и предложение цены -->
-<div id="economics" class="bg-white rounded-lg border border-slate-200 p-6 mt-4">
-  <div class="flex items-center justify-between gap-3 mb-3">
-    <h2 class="text-sm font-semibold text-slate-500">Экономика и цена</h2>
-    {% if economics %}
-    <a href="/tender/{{ t.reestr_number }}/economics/{{ economics.id }}/export.xlsx"
-       class="text-xs text-indigo-600 hover:text-indigo-800 font-medium">↓ Скачать Excel</a>
-    {% endif %}
-  </div>
+<div class="mt-4" data-panel="overview">{% include "tenders/_overview.html" %}</div>
+<div class="mt-4" data-panel="docs" hidden>{% include "tenders/_docs.html" %}</div>
+<div class="mt-4" data-panel="economics" hidden><div id="economics">{% include "tenders/_economics.html" %}</div></div>
+<div class="mt-4" data-panel="tracking" hidden>{% include "tenders/_tracking.html" %}</div>
 
-  {% if t.nmck is none %}
-  <div class="mb-3 bg-violet-50 border border-violet-200 rounded-md px-3 py-2.5">
-    <div class="text-[13px] text-violet-900 mb-2">
-      НМЦК не указана. Расчёт сформирует <b>цену предложения от себестоимости</b> (по затратам
-      проектов-аналогов и марже бюро). Если цена известна из источника — введите её, и расчёт
-      пойдёт классически, долями от цены.
-    </div>
-    <form action="/tender/{{ t.reestr_number }}/nmck" method="post" class="flex flex-wrap items-center gap-2">
-      <input name="nmck" placeholder="НМЦК, ₽ (если известна)"
-             class="border border-violet-200 rounded-md px-2.5 py-1 text-sm w-48">
-      <button class="text-xs px-3 py-1.5 rounded-md border border-violet-300 text-violet-800 bg-white hover:bg-violet-100">Сохранить НМЦК</button>
-    </form>
-  </div>
-  {% endif %}
-
-  {% if eco_job and eco_job.running and eco_job.reestr_number == t.reestr_number %}
-  <div class="mb-3">{{ progress_bar('eco-progress', eco_job.phase or 'Считаю экономику…') }}</div>
-  <script>
-  craftProgressPoll('/tender/{{ t.reestr_number }}/economics/status', 'eco-progress', 3000);
-  </script>
-  {% elif eco_job and eco_job.running %}
-  <div class="mb-3 flex flex-wrap items-center gap-3">
-    <button class="bg-slate-200 text-slate-400 rounded-md px-4 py-1.5 text-sm font-medium cursor-not-allowed" disabled
-            title="Идёт расчёт по другому тендеру — дождитесь завершения">
-      {{ 'Пересчитать экономику' if economics else 'Предложить цену (ИИ)' }}
-    </button>
-    <span class="text-xs text-slate-400">идёт расчёт по тендеру {{ eco_job.reestr_number }} — дождитесь завершения</span>
-  </div>
-  {% else %}
-  <form action="/tender/{{ t.reestr_number }}/economics/propose" method="post"
-        class="flex flex-wrap items-center gap-3 mb-3"
-        onsubmit="this.querySelector('button').disabled=true; this.querySelector('button').textContent='Запускаю…';">
-    <button class="bg-indigo-600 text-white rounded-md px-4 py-1.5 text-sm font-medium hover:bg-indigo-500 disabled:opacity-60">
-      {{ 'Пересчитать экономику' if economics else ('Сформировать предложение (ИИ)' if t.nmck is none else 'Предложить цену (ИИ)') }}
-    </button>
-    <label class="text-xs text-slate-500 inline-flex items-center gap-1.5">
-      <input type="checkbox" name="deep" value="1" class="rounded border-slate-300">
-      глубокий режим (заново читает всё ТЗ — точнее, дороже)
-    </label>
-    {% if not analyses %}<span class="text-xs text-amber-600">нужен разобранный бриф ТЗ (выше)</span>{% endif %}
-    {% if eco_kb_size == 0 %}<span class="text-xs text-amber-600">база «Экономики» не импортирована</span>{% endif %}
-  </form>
-  {% endif %}
-
-  {% if economics %}
-  {% set pl = economics.payload %}
-  {% set offer = pl.base.nmck is none %}
-  <div class="text-xs text-slate-400 mb-3">
-    Версия от {{ economics.created_at | date_ru(true) }} ·
-    {{ 'правка человека' if economics.created_by == 'user' else 'расчёт ИИ (' ~ (economics.model or '—') ~ ')' }}
-    {% if pl.deep %} · глубокий режим{% endif %}
-    · база: {{ 'предложение от себестоимости (НМЦК нет)' if offer else pl.base.nmck | money('₽') }}
-    {% if pl.base.mode == 'pd_share' and pl.base.pd_share_pct %} · на ПД ~{{ pl.base.pd_share_pct }}% цены ({{ pl.base.rationale }}){% endif %}
-    {% if pl.base.object_kind %} · тип: {{ {'building': 'здание', 'landscaping': 'благоустройство', 'heritage': 'ОКН', 'linear': 'линейный', 'other': 'прочее'}.get(pl.base.object_kind, pl.base.object_kind) }}{% endif %}
-    {% if pl.base.design_stage %} · стадия: {{ {'pd': 'ПД', 'rd': 'РД', 'pd_rd': 'ПД+РД'}.get(pl.base.design_stage, pl.base.design_stage) }}{% endif %}
-  </div>
-
-  {% for w in pl.warnings %}
-  <div class="mb-2 text-[13px] leading-6 {{ 'text-red-800 bg-red-50 border-red-200' if w.startswith('⚠') else 'text-amber-800 bg-amber-50 border-amber-200' }} border rounded-md px-3 py-1.5">{{ w }}</div>
-  {% endfor %}
-
-  <form action="/tender/{{ t.reestr_number }}/economics/{{ economics.id }}/edit" method="post">
-    <div class="overflow-x-auto">
-      <table class="w-full text-[13px] mt-2">
-        <thead>
-          <tr class="text-xs text-slate-400 border-b border-slate-200 text-left">
-            <th class="py-1.5 pr-2 font-medium">Раздел (из ТЗ)</th>
-            <th class="py-1.5 pr-2 font-medium w-20">Доля, %</th>
-            <th class="py-1.5 pr-2 font-medium w-32">Сумма, ₽</th>
-            <th class="py-1.5 pr-2 font-medium">Основание</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% macro eco_row(line, key) %}
-          <tr class="border-b border-slate-100 align-top {{ 'bg-amber-50/60' if line.source == 'no_data' }}">
-            <td class="py-1.5 pr-2">
-              <div class="text-slate-800">{{ line.name }}</div>
-              {% if line.canon_label and line.canon_label != line.name %}<div class="text-xs text-slate-400">→ {{ line.canon_label }}</div>{% endif %}
-              {% if line.quote %}<div class="text-xs text-slate-400 italic mt-0.5">«{{ line.quote[:160] }}»</div>{% endif %}
-            </td>
-            <td class="py-1.5 pr-2">
-              <input name="share_{{ key }}" value="{{ line.share_pct if line.share_pct is not none else '' }}"
-                     class="w-16 border border-slate-200 rounded px-1.5 py-0.5 text-right {{ 'bg-amber-50' if line.source == 'no_data' }}">
-            </td>
-            <td class="py-1.5 pr-2">
-              <input name="amount_{{ key }}" value="{{ line.amount if line.amount is not none else '' }}"
-                     class="w-28 border border-slate-200 rounded px-1.5 py-0.5 text-right {{ 'bg-amber-50' if line.source == 'no_data' }}">
-            </td>
-            <td class="py-1.5 pr-2 text-xs text-slate-500">
-              {% if line.source == 'analog' %}медиана по {{ line.n_analogs }} аналог.{% if line.range_pct %} ({{ line.range_pct[0] }}–{{ line.range_pct[1] }}%){% endif %}{% if line.range_amount %} ({{ line.range_amount[0] | money('') }}–{{ line.range_amount[1] | money('₽') }}){% endif %}
-              {% elif line.source == 'sbcp' %}<span class="text-sky-700 font-medium">норматив СБЦП</span> (приведён к затратам бюро)
-              {% elif line.source == 'ai' %}ИИ по типу проекта{% if line.range_pct %}, диапазон истории {{ line.range_pct[0] }}–{{ line.range_pct[1] }}%{% endif %}
-              {% elif line.source == 'user' %}правка человека
-              {% else %}<span class="text-amber-700 font-medium">нет данных — оцените вручную</span>{% endif %}
-              {% if line.note %}<div class="mt-0.5">{{ line.note }}</div>{% endif %}
-            </td>
-          </tr>
-          {% endmacro %}
-          {% for line in pl.lines %}{{ eco_row(line, 'l' ~ loop.index0) }}{% endfor %}
-          {% for line in pl.overheads %}{{ eco_row(line, 'o' ~ loop.index0) }}{% endfor %}
-        </tbody>
-        <tfoot>
-          <tr class="font-semibold text-slate-800 border-t border-slate-300">
-            <td class="py-2 pr-2">ИТОГО себестоимость</td>
-            <td class="py-2 pr-2 text-right">{{ ((pl.totals.cost / pl.base.nmck * 100) | round(1)) if pl.base.nmck else '' }}</td>
-            <td class="py-2 pr-2 text-right whitespace-nowrap">{{ pl.totals.cost | money('') }}</td>
-            <td class="py-2 pr-2 text-xs font-normal text-slate-500">
-              {% if offer %}
-              прибыль при предложенной цене: {{ pl.totals.profit_at_offer | money('₽') }} ({{ pl.totals.margin_pct }}%)
-              {% else %}
-              прибыль при НМЦК: {{ pl.totals.profit_at_nmck | money('₽') }} ({{ pl.totals.margin_pct }}%)
-              {% endif %}
-            </td>
-          </tr>
-          {% if offer %}
-          <tr class="font-semibold text-indigo-900 bg-indigo-50/60">
-            <td class="py-2 pr-2">ПРЕДЛОЖЕНИЕ ЦЕНЫ (себестоимость + маржа {{ pl.totals.margin_pct }}%)</td>
-            <td></td>
-            <td class="py-2 pr-2 text-right whitespace-nowrap text-base">{{ pl.totals.price | money('') }}</td>
-            <td class="py-2 pr-2 text-xs font-normal text-indigo-800/70">цена = себестоимость разделов ÷ (1 − накладные% − маржа%)</td>
-          </tr>
-          {% endif %}
-        </tfoot>
-      </table>
-    </div>
-    <div class="flex flex-wrap items-center gap-3 mt-3">
-      <button class="bg-slate-900 text-white rounded-md px-4 py-1.5 text-sm hover:bg-slate-700">Сохранить правки (новая версия)</button>
-      {% if offer %}
-      <label class="text-xs text-slate-500">целевая маржа, %:
-        <input name="target_margin_pct" value="{{ pl.params.target_margin_pct }}"
-               class="w-14 border border-slate-200 rounded px-1.5 py-0.5 text-right ml-1">
-      </label>
-      {% endif %}
-      <label class="text-xs text-slate-500">мин. маржа, %:
-        <input name="min_margin_pct" value="{{ pl.params.min_margin_pct }}"
-               class="w-14 border border-slate-200 rounded px-1.5 py-0.5 text-right ml-1">
-      </label>
-      <span class="text-xs text-slate-400">итоги и сетка пересчитаются автоматически; правки хранятся новой версией</span>
-    </div>
-  </form>
-
-  <div class="grid md:grid-cols-2 gap-4 mt-5">
-    <div>
-      <div class="text-xs font-semibold text-slate-500 mb-1.5">{{ 'Варианты цены по марже' if offer else 'Сетка понижения цены' }}</div>
-      <table class="w-full text-[13px]">
-        <thead><tr class="text-xs text-slate-400 text-left border-b border-slate-200">
-          <th class="py-1 font-medium">{{ 'маржа' if offer else 'снижение' }}</th><th class="py-1 font-medium text-right">цена</th><th class="py-1 font-medium text-right">прибыль</th>{% if not offer %}<th class="py-1 font-medium text-right">маржа</th>{% endif %}
-        </tr></thead>
-        <tbody>
-          {% for sc in pl.scenarios %}
-          <tr class="border-b border-slate-100 {{ 'text-red-700' if sc.profit < 0 }}">
-            <td class="py-1">{{ (sc.margin_pct ~ '%') if offer else ('−' ~ sc.reduction_pct ~ '%') }}</td>
-            <td class="py-1 text-right whitespace-nowrap">{{ sc.price | money('') }}</td>
-            <td class="py-1 text-right whitespace-nowrap">{{ sc.profit | money('') }}</td>
-            {% if not offer %}<td class="py-1 text-right">{{ sc.margin_pct }}%</td>{% endif %}
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      <div class="mt-2 text-[13px] text-slate-800 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
-        Минимально допустимая цена (маржа {{ pl.min_price.min_margin_pct | round | int }}%):
-        <span class="font-semibold">{{ pl.min_price.price | money('₽') }}</span>
-        {% if pl.min_price.max_reduction_pct is not none %}
-        — снижение до <span class="font-semibold">{{ pl.min_price.max_reduction_pct }}%</span> от НМЦК
-        {% else %}
-        — ниже опускаться нельзя
-        {% endif %}
-      </div>
-    </div>
-    <div>
-      <div class="text-xs font-semibold text-slate-500 mb-1.5">Проекты-аналоги ({{ pl.analogs | length }})</div>
-      <div class="space-y-1.5">
-        {% for a in pl.analogs %}
-        <div class="text-[13px] leading-5 bg-slate-50 border border-slate-100 rounded-md px-2.5 py-1.5">
-          <span class="font-medium text-slate-800">{{ a.title }}</span>
-          <span class="text-slate-400">· {{ 'факт' if a.sheet == 'work' else 'прикидка' }}{% if a.contract_total %} · {{ a.contract_total | money('₽') }}{% endif %}</span>
-          {% if a.reason %}<div class="text-xs text-slate-500 mt-0.5">{{ a.reason }}</div>{% endif %}
-        </div>
-        {% endfor %}
-      </div>
-      {% if pl.comments %}
-      <div class="text-xs font-semibold text-slate-500 mt-3 mb-1">Комментарий ИИ</div>
-      <p class="text-[13px] leading-6 text-slate-600">{{ pl.comments }}</p>
-      {% endif %}
-    </div>
-  </div>
-
-  {% if pl.review %}
-  {% set rv = pl.review %}
-  <div class="mt-5 pt-4 border-t border-slate-200">
-    <div class="flex items-center gap-2 mb-2">
-      <h3 class="text-sm font-semibold text-slate-700">Оценка реальности расчёта (ИИ + открытые источники)</h3>
-      {% set verdict = rv.overall.verdict if rv.overall else 'verify' %}
-      <span class="text-xs font-medium rounded px-2 py-0.5 border
-        {{ 'bg-emerald-50 text-emerald-700 border-emerald-200' if verdict == 'realistic'
-           else 'bg-red-50 text-red-700 border-red-200' if verdict == 'optimistic'
-           else 'bg-amber-50 text-amber-700 border-amber-200' }}">
-        {{ 'реалистичен' if verdict == 'realistic' else 'оптимистичен (расходы занижены)' if verdict == 'optimistic' else 'занижена цена / проверить' if verdict == 'understated' else 'требует проверки' }}
-      </span>
-      {% if rv.applied %}<span class="text-xs text-slate-400">рекомендации применены</span>{% endif %}
-    </div>
-    {% if rv.overall and rv.overall.summary %}
-    <p class="text-[14px] leading-7 text-slate-700 mb-3">{{ rv.overall.summary }}</p>
-    {% endif %}
-
-    {% if rv.adjustments %}
-    <div class="overflow-x-auto">
-      <table class="w-full text-[13px]">
-        <thead><tr class="text-xs text-slate-400 text-left border-b border-slate-200">
-          <th class="py-1.5 pr-2 font-medium">Строка</th>
-          <th class="py-1.5 pr-2 font-medium">Вердикт</th>
-          <th class="py-1.5 pr-2 font-medium">Предложение, ₽</th>
-          <th class="py-1.5 pr-2 font-medium">Обоснование и источник</th>
-        </tr></thead>
-        <tbody>
-          {% for adj in rv.adjustments %}
-          <tr class="border-b border-slate-100 align-top">
-            <td class="py-1.5 pr-2 text-slate-800">{{ adj.name }}</td>
-            <td class="py-1.5 pr-2">
-              {% if adj.assessment == 'increase' %}<span class="text-red-700">↑ занижено</span>
-              {% elif adj.assessment == 'decrease' %}<span class="text-emerald-700">↓ можно сократить</span>
-              {% elif adj.assessment == 'verify' %}<span class="text-amber-700">проверить</span>
-              {% else %}<span class="text-slate-500">ок</span>{% endif %}
-            </td>
-            <td class="py-1.5 pr-2 whitespace-nowrap">{{ adj.suggested_amount | money('') if adj.suggested_amount is not none else '—' }}</td>
-            <td class="py-1.5 pr-2 text-xs text-slate-500">
-              {{ adj.reasoning }}
-              {% if adj.source %}<div class="text-slate-400 mt-0.5 break-all">источник: {{ adj.source }}</div>{% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% if not rv.applied %}
-    <form action="/tender/{{ t.reestr_number }}/economics/{{ economics.id }}/apply-review" method="post" class="mt-2"
-          onsubmit="this.querySelector('button').disabled=true;">
-      <button class="border border-indigo-300 text-indigo-700 bg-indigo-50 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-indigo-100 disabled:opacity-60">
-        Применить рекомендации с конкретными суммами (новая версия)
-      </button>
-    </form>
-    {% endif %}
-    {% endif %}
-
-    {% if rv.missing_costs %}
-    <div class="text-xs font-semibold text-slate-500 mt-3 mb-1">Чего не хватает в расчёте</div>
-    <div class="space-y-1">
-      {% for m in rv.missing_costs %}
-      <div class="text-[13px] leading-6 text-amber-900 bg-amber-50 border border-amber-100 rounded-md px-2.5 py-1">
-        {{ m.name }}{% if m.estimate is not none %} — ~{{ m.estimate | money('₽') }}{% endif %}
-        {% if m.reasoning %}<span class="text-amber-700"> · {{ m.reasoning }}</span>{% endif %}
-        {% if m.source %}<span class="text-amber-600 text-xs break-all"> ({{ m.source }})</span>{% endif %}
-      </div>
-      {% endfor %}
-    </div>
-    {% endif %}
-
-    <div class="grid md:grid-cols-2 gap-4 mt-3">
-      {% if rv.market_notes %}
-      <div>
-        <div class="text-xs font-semibold text-slate-500 mb-1">Рыночные ориентиры (открытые источники)</div>
-        <div class="space-y-1">
-          {% for n in rv.market_notes %}
-          <div class="text-[13px] leading-5 text-slate-600 bg-slate-50 border border-slate-100 rounded-md px-2.5 py-1.5">
-            {{ n.note }}{% if n.source %}<div class="text-xs text-slate-400 break-all">{{ n.source }}</div>{% endif %}
-          </div>
-          {% endfor %}
-        </div>
-      </div>
-      {% endif %}
-      {% if rv.suggested_price and rv.suggested_price.price is not none %}
-      <div>
-        <div class="text-xs font-semibold text-slate-500 mb-1">Цена от ИИ</div>
-        <div class="text-[14px] bg-indigo-50 border border-indigo-200 rounded-md px-3 py-2.5">
-          <div class="font-semibold text-indigo-900 text-base">{{ rv.suggested_price.price | money('₽') }}</div>
-          {% if rv.suggested_price.rationale %}<div class="text-[13px] leading-6 text-indigo-900/80 mt-1">{{ rv.suggested_price.rationale }}</div>{% endif %}
-        </div>
-      </div>
-      {% endif %}
-    </div>
-  </div>
-  {% endif %}
-  {% elif not (eco_job and eco_job.running) %}
-  <p class="text-sm text-slate-400">Расчёта ещё нет. ИИ возьмёт состав работ из брифа ТЗ, подберёт проекты-аналоги из базы «Экономики» и посчитает себестоимость по медианным долям — все числа считает алгоритм, не модель. Разделы без данных будут честно помечены.</p>
-  {% endif %}
-</div>
+<script>
+(function () {
+  var tabs = document.querySelectorAll('#tabs [data-tab]');
+  var panels = document.querySelectorAll('[data-panel]');
+  var active = 'bg-white text-slate-900 border-slate-200 -mb-px'.split(' ');
+  var inactive = 'text-slate-500 border-transparent'.split(' ');
+  function activate(key, push) {
+    var known = false;
+    tabs.forEach(function (b) { if (b.dataset.tab === key) known = true; });
+    if (!known) key = 'overview';
+    tabs.forEach(function (b) {
+      var on = b.dataset.tab === key;
+      active.forEach(function (c) { b.classList.toggle(c, on); });
+      inactive.forEach(function (c) { b.classList.toggle(c, !on); });
+    });
+    panels.forEach(function (p) { p.hidden = p.dataset.panel !== key; });
+    if (push) history.replaceState(null, '', '#' + key);
+  }
+  tabs.forEach(function (b) {
+    b.addEventListener('click', function () { activate(b.dataset.tab, true); });
+  });
+  window.addEventListener('hashchange', function () { activate(location.hash.slice(1), false); });
+  activate(location.hash.slice(1) || 'overview', false);
+})();
+</script>
 
 {% endblock %}
