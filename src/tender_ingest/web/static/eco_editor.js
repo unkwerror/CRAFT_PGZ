@@ -17,11 +17,18 @@ function ecoEditorInit() {
     return isFinite(n) ? n : null;
   }
 
+  // Название раздела — авторастущий textarea: текст из ТЗ виден целиком
+  function autosize(el) {
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + 'px';
+  }
+  root.querySelectorAll('textarea[data-f=name]').forEach(autosize);
+
   function collectBucket(tbodyId) {
     var refs = [];
     var rows = [];
     root.querySelectorAll('#' + tbodyId + ' tr.eco-row').forEach(function (tr) {
-      var name = tr.querySelector('[data-f=name]').value.trim();
+      var name = tr.querySelector('[data-f=name]').value.replace(/\s+/g, ' ').trim();
       if (!name) return; // пустое имя — строка не участвует (и не обновляется ответом)
       refs.push(tr);
       rows.push({
@@ -153,6 +160,7 @@ function ecoEditorInit() {
 
   root.addEventListener('input', function (e) {
     var f = e.target.dataset.f;
+    if (f === 'name') autosize(e.target);
     if (f === 'amount' || f === 'share_pct') e.target.closest('tr').dataset.touched = f;
     if (f || e.target.dataset.b != null || e.target.dataset.p != null) schedule();
   });

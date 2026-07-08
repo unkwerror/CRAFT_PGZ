@@ -8,7 +8,7 @@
                        'heritage': 'ОКН', 'expertise': 'Экспертизы и согласования',
                        'other': 'Прочее'} %}
 {% macro canon_select(selected) %}
-<select data-f="canon" class="w-full max-w-[210px] border border-slate-200 rounded px-1 py-0.5 text-xs text-slate-600 bg-white">
+<select data-f="canon" class="w-full border border-slate-200 rounded px-1.5 py-1 text-[13px] text-slate-700 bg-white">
   <option value="">— без канона —</option>
   {% for group, items in eco_catalog | groupby('group') %}
   <optgroup label="{{ group_labels.get(group, group) }}">
@@ -32,8 +32,9 @@
 {% macro eco_row(line, idx) %}
 <tr data-idx="{{ idx }}" class="eco-row border-b border-slate-100 align-top {{ 'bg-amber-50/60' if line.source == 'no_data' }}">
   <td class="py-1.5 pr-2">
-    <input data-f="name" value="{{ line.name }}" class="w-full border border-transparent hover:border-slate-200 focus:border-slate-300 rounded px-1 py-0.5 text-slate-800 bg-transparent">
-    {% if line.quote %}<div class="text-xs text-slate-400 italic mt-0.5 px-1">«{{ line.quote[:160] }}»</div>{% endif %}
+    <textarea data-f="name" rows="1"
+              class="w-full resize-none overflow-hidden border border-transparent hover:border-slate-200 focus:border-slate-300 rounded px-1 py-0.5 text-slate-800 bg-transparent leading-snug">{{ line.name }}</textarea>
+    {% if line.quote %}<div class="text-xs text-slate-400 italic mt-0.5 px-1">«{{ line.quote }}»</div>{% endif %}
   </td>
   <td class="py-1.5 pr-2">{{ canon_select(line.canon) }}</td>
   <td class="py-1.5 pr-2">
@@ -195,7 +196,7 @@
       <thead>
         <tr class="text-xs text-slate-400 border-b border-slate-200 text-left">
           <th class="py-1.5 pr-2 font-medium">Раздел (из ТЗ)</th>
-          <th class="py-1.5 pr-2 font-medium w-52">Канонический раздел</th>
+          <th class="py-1.5 pr-2 font-medium w-64">Канонический раздел</th>
           <th class="py-1.5 pr-2 font-medium w-20">Доля, %</th>
           <th class="py-1.5 pr-2 font-medium w-32">Сумма, ₽</th>
           <th class="py-1.5 pr-2 font-medium">Основание</th>
