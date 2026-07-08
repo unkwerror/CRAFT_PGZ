@@ -457,6 +457,155 @@ def test_sbcp_check_flags_deviation() -> None:
     assert any("СБЦП" in w for w in payload["warnings"])
 
 
+def test_aggregate_canons_match() -> None:
+    from tender_ingest.economics.canon import detect_aggregate
+
+    assert match_canon("Проектная документация (ПД)") == "pd_total"
+    assert match_canon("Рабочая документация (РД)") == "rd_total"
+    assert match_canon("Проектная и рабочая документация") == "pd_rd_total"
+    assert match_canon("Предпроектная подготовка") == "ep"
+    # регрессии: частные правила по-прежнему побеждают
+    assert match_canon("Печать документации") == "print_docs"
+    assert match_canon("Согласование документации") == "approvals"
+    assert match_canon("Иная документация") == "other_docs"
+    assert match_canon("ГЭ ПД") == "expertise_pd"
+    assert match_canon("Раздел АР проектной документации") == "ar"
+    assert match_canon("Сметная документация (СМ)") == "smeta"
+    # detect_aggregate — узкий
+    assert detect_aggregate("Проектная документация (ПД)") == "pd_total"
+    assert detect_aggregate("РД") == "rd_total"
+    assert detect_aggregate("Архитектурные решения") is None
+    assert detect_aggregate("Экспертиза проектной документации") is None
+    assert detect_aggregate("Сопровождение экспертизы ПД") is None
+
+
+def _aggregate_case_analogs() -> list[AnalogProject]:
+    """Аналоги с пораздельными АБСОЛЮТНЫМИ затратами (offer-режим, как в прод-кейсе)."""
+    return [
+        AnalogProject(id=1, sheet="work", title="A1", contract_total=8_000_000.0,
+                      sections={}, section_names={},
+                      amounts={"ar": 900_000, "kr": 700_000, "ios4": 400_000,
+                               "smeta": 200_000, "pos": 300_000}),
+        AnalogProject(id=2, sheet="work", title="A2", contract_total=9_000_000.0,
+                      sections={}, section_names={},
+                      amounts={"ar": 1_100_000, "kr": 800_000, "ios4": 500_000,
+                               "smeta": 250_000, "pz": 150_000}),
+        AnalogProject(id=3, sheet="work", title="A3", contract_total=7_000_000.0,
+                      sections={}, section_names={},
+                      amounts={"ar": 800_000, "kr": 600_000, "ios4": 350_000,
+                               "smeta": 180_000, "pb": 120_000}),
+    ]
+
+
+def test_aggregate_derived_estimate_offer_mode() -> None:
+    """Слепок прод-кейса: ПД/РД целиком + отдельные КМ/СМ -> производная оценка."""
+    base = BaseInput(nmck=None)
+    sections = [
+        SectionInput(name="Проектная документация (ПД)", canon="pd_total"),
+        SectionInput(name="Рабочая документация (РД)", canon="rd_total"),
+        SectionInput(name="Раздел КМ", canon="kr"),
+        SectionInput(name="Сметная документация", canon="smeta"),
+    ]
+    analogs = _aggregate_case_analogs()
+    payload = build_payload(
+        base=base, sections=sections, overheads=[], analogs=analogs, all_projects=analogs
+    )
+    pd, rd, kr_line, sm = payload["lines"]
+    # kr и smeta заняты отдельными строками -> исключены из суммы design-группы:
+    # D_1 = 900+400+300 = 1600к; D_2 = 1100+500+150 = 1750к; D_3 = 800+350+120 = 1270к
+    # медиана D = 1600к -> ПД 640к (40%), РД 960к (60%)
+    assert pd["source"] == "derived" and rd["source"] == "derived"
+    assert pd["amount"] == 640_000.0
+    assert rd["amount"] == 960_000.0
+    assert pd["n_analogs"] == 3
+    assert kr_line["source"] == "analog" and sm["source"] == "analog"
+    # агрегаты вошли в итог, «занижен»-предупреждения нет
+    assert payload["totals"]["cost"] > pd["amount"] + rd["amount"]
+    assert not any("ЗАНИЖЕН" in w for w in payload["warnings"])
+
+
+def test_aggregate_backstop_without_canon() -> None:
+    """Главный тест прод-кейса: ИИ вернул canon=None, движок сам распознаёт агрегат."""
+    base = BaseInput(nmck=None)
+    sections = [SectionInput(name="Проектная документация (ПД)", canon=None)]
+    analogs = _aggregate_case_analogs()
+    payload = build_payload(
+        base=base, sections=sections, overheads=[], analogs=analogs, all_projects=analogs
+    )
+    line = payload["lines"][0]
+    assert line["canon"] == "pd_total"
+    assert line["source"] == "derived"
+    # ничего не занято: D = 2500к / 2800к / 2050к, медиана 2500к, ПД 40% = 1000к
+    assert line["amount"] == 1_000_000.0
+
+
+def test_aggregate_composite_exclusion() -> None:
+    """Занят ar_kr -> у аналога исключаются и ar, и kr (обе стороны композита)."""
+    base = BaseInput(nmck=None)
+    sections = [
+        SectionInput(name="ПД", canon="pd_total"),
+        SectionInput(name="АР+КР", canon="ar_kr"),
+    ]
+    analogs = _aggregate_case_analogs()
+    payload = build_payload(
+        base=base, sections=sections, overheads=[], analogs=analogs, all_projects=analogs
+    )
+    pd = payload["lines"][0]
+    # без ar и kr: D_1 = 400+200+300 = 900к; D_2 = 500+250+150 = 900к; D_3 = 350+180+120 = 650к
+    assert pd["amount"] == round(0.4 * 900_000, 2)
+
+
+def test_aggregate_sparse_analog_skipped_and_duplicate_guard() -> None:
+    base = BaseInput(nmck=None)
+    sections = [
+        SectionInput(name="ПД", canon="pd_total"),
+        SectionInput(name="Проектная документация повторно", canon="pd_total"),
+    ]
+    sparse = AnalogProject(id=9, sheet="work", title="Разреженный", contract_total=5e6,
+                           sections={}, section_names={}, amounts={"ar": 500_000})
+    analogs = [*_aggregate_case_analogs(), sparse]
+    payload = build_payload(
+        base=base, sections=sections, overheads=[], analogs=analogs, all_projects=analogs
+    )
+    first, second = payload["lines"]
+    assert first["source"] == "derived" and first["n_analogs"] == 3  # разреженный не учтён
+    assert second["source"] == "no_data"  # дубль агрегата остаётся без оценки
+    assert any("повторяется" in w for w in payload["warnings"])
+    # незакрытый агрегат — «итог занижен» первым предупреждением
+    assert payload["warnings"][0].startswith("⚠ Итог ЗАНИЖЕН")
+
+
+def test_aggregate_nmck_mode_shares() -> None:
+    base = BaseInput(nmck=10_000_000.0)
+    sections = [SectionInput(name="ПД и РД", canon="pd_rd_total")]
+    analogs = [
+        _analog(1, {"ar": 0.05, "kr": 0.04, "ios4": 0.03}),
+        _analog(2, {"ar": 0.06, "kr": 0.05, "ios4": 0.02}),
+        _analog(3, {"ar": 0.04, "kr": 0.05, "ios4": 0.04}),
+    ]
+    payload = build_payload(
+        base=base, sections=sections, overheads=[], analogs=analogs, all_projects=analogs
+    )
+    line = payload["lines"][0]
+    # доли: 0.12 / 0.13 / 0.13 -> медиана 0.13, фактор 1.0
+    assert line["source"] == "derived"
+    assert line["share_pct"] == 13.0
+    assert line["amount"] == 1_300_000.0
+
+
+def test_double_design_canon_warning() -> None:
+    base, _sections, overheads, analogs = _base_inputs()
+    sections = [
+        SectionInput(name="АР (ПД)", canon="ar"),
+        SectionInput(name="АР (РД)", canon="ar"),
+    ]
+    payload = build_payload(
+        base=base, sections=sections, overheads=overheads, analogs=analogs,
+        all_projects=analogs,
+    )
+    assert any("двойной счёт" in w for w in payload["warnings"])
+
+
 def test_overhead_history_ranges_fallback() -> None:
     ranges = overhead_history_ranges([])  # пустая история -> страховочные диапазоны
     assert ranges["gip"] == (2.0, 15.0)

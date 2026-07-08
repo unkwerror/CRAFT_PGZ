@@ -20,6 +20,8 @@
 
 from __future__ import annotations
 
+from tender_ingest.economics.canon import COMPOSITE_SECTIONS
+
 SBCP_SOURCE = (
     "СБЦП «Объекты жилищно-гражданского строительства» "
     "(приказ Минрегиона России от 28.05.2010 № 260), табл. 41/42"
@@ -68,12 +70,6 @@ _RD_WEIGHTS: dict[str, float] = {
 _PD_SHARE_OF_BASE = 0.4
 _RD_SHARE_OF_BASE = 0.6
 
-# Составные каноны нашей базы -> сумма нормативных весов частей.
-_COMPOSITE: dict[str, tuple[str, ...]] = {
-    "ios2_3": ("ios2", "ios3"),
-    "ar_kr": ("ar", "kr"),
-}
-
 DESIGN_STAGES = ("pd", "rd", "pd_rd")
 
 
@@ -92,7 +88,7 @@ def sbcp_weights(design_stage: str) -> dict[str, float]:
         }
     total = sum(raw.values())
     weights = {key: value / total for key, value in raw.items() if value > 0}
-    for composite, parts in _COMPOSITE.items():
+    for composite, parts in COMPOSITE_SECTIONS.items():
         value = sum(weights.get(p, 0.0) for p in parts)
         if value > 0:
             weights[composite] = value

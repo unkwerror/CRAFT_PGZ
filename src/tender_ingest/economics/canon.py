@@ -75,6 +75,11 @@ CATALOG: tuple[CanonSection, ...] = (
     CanonSection("viz", "Визуализация / графический дизайн", "design"),
     CanonSection("design_project", "Дизайн-проект", "design"),
     CanonSection("landscape", "Ландшафтные решения", "design"),
+    # агрегаты стадий: ТЗ иногда пишет «ПД»/«РД» целиком без пораздельной детализации;
+    # прямой статистики в базе нет — движок оценивает производно от design-группы аналогов
+    CanonSection("pd_total", "ПД целиком (агрегат, состав не расписан)", "design"),
+    CanonSection("rd_total", "РД целиком (агрегат)", "design"),
+    CanonSection("pd_rd_total", "ПД+РД целиком (агрегат)", "design"),
     # --- изыскания и обследования ---
     CanonSection("surveys_all", "Инженерные изыскания (комплекс)", "survey"),
     CanonSection("igdi", "ИГДИ — геодезические изыскания", "survey"),
@@ -110,6 +115,19 @@ CATALOG: tuple[CanonSection, ...] = (
 )
 
 CATALOG_BY_KEY: dict[str, CanonSection] = {s.key: s for s in CATALOG}
+
+# Агрегатная стадия -> доля от суммы design-группы аналога (п. 1.5 СБЦП: ПД 40% / РД 60%).
+AGGREGATE_DESIGN_KEYS: dict[str, float] = {
+    "pd_total": 0.4,
+    "rd_total": 0.6,
+    "pd_rd_total": 1.0,
+}
+
+# Составные каноны и их части — для анти-задвоения в движке и весов СБЦП.
+COMPOSITE_SECTIONS: dict[str, tuple[str, ...]] = {
+    "ios2_3": ("ios2", "ios3"),
+    "ar_kr": ("ar", "kr"),
+}
 
 
 def normalize_name(raw: str) -> str:
@@ -241,15 +259,60 @@ _RULES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
         (r"\bоди\b|доступ\w? инвалид|маломобильн", "odi"),
         (r"тбэ|безопасн\w+ эксплуатац", "tbe"),
         (r"гочс", "gochs"),
-        (r"\bэп\b|эскизн|концепц", "ep"),
+        (r"\bэп\b|эскизн|концепц|предпроектн", "ep"),
         (r"визуализ|графический дизайнер", "viz"),
         (r"дизайн[ -]?проект|брендинг|дизайнер интерьер", "design_project"),
         (r"ландшафт", "landscape"),
+        # агрегаты стадий — В КОНЦЕ design-блока: частные правила выше (печать/иная/
+        # согласование документации, ГЭ ПД, разделы) должны побеждать
+        (r"проектн\w+ и рабоч\w+ документаци", "pd_rd_total"),
+        (r"рабоч\w+ документаци|\bрд\b", "rd_total"),
+        (r"проектн\w+ документаци|\bпд\b", "pd_total"),
         # прочее
         (r"\bрхр\b|рыбохозяйствен", "rhr"),
         (r"дополнительны\w+ затрат|корректировк|затраты проектной группы", "dop_other"),
     )
 )
+
+
+# Узкий распознаватель агрегатных стадий — фолбэк движка для строк с canon=None.
+# Голые аббревиатуры («пд», «рд») принимаются только как ЦЕЛОЕ название, чтобы не
+# зацепить «сопровождение экспертизы ПД» и подобное.
+_AGGREGATE_EXACT: dict[str, str] = {
+    "пд": "pd_total",
+    "рд": "rd_total",
+    "пд+рд": "pd_rd_total",
+    "пд и рд": "pd_rd_total",
+    "стадия п": "pd_total",
+    "стадия р": "rd_total",
+}
+_AGGREGATE_RX: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(pattern), key)
+    for pattern, key in (
+        (r"предпроектн", "ep"),
+        (r"проектн\w+ и рабоч\w+ документаци", "pd_rd_total"),
+        (r"рабоч\w+ документаци", "rd_total"),
+        (r"проектн\w+ документаци", "pd_total"),
+    )
+)
+
+
+def detect_aggregate(raw: str) -> str | None:
+    """Название строки ТЗ -> агрегатный канон стадии (или ep), если это агрегат."""
+    name = normalize_name(raw)
+    if not name:
+        return None
+    exact = _AGGREGATE_EXACT.get(name)
+    if exact is not None:
+        return exact
+    # «Экспертиза/согласование/печать … документации» — работа НАД документацией,
+    # а не сама разработка: агрегатом не считаем
+    if re.search(r"экспертиз|согласован|печать|провер", name):
+        return None
+    for pattern, key in _AGGREGATE_RX:
+        if pattern.search(name):
+            return key
+    return None
 
 
 def match_canon(raw: str) -> str | None:

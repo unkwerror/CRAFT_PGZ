@@ -24,7 +24,12 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Any
 
-from tender_ingest.economics.canon import CATALOG_BY_KEY
+from tender_ingest.economics.canon import (
+    AGGREGATE_DESIGN_KEYS,
+    CATALOG_BY_KEY,
+    COMPOSITE_SECTIONS,
+    detect_aggregate,
+)
 from tender_ingest.economics.sbcp import SBCP_SOURCE, sbcp_weights, stage_label
 from tender_ingest.economics.store import AnalogProject
 
@@ -248,6 +253,133 @@ def _apply_sbcp_fallback(
             line.update({"amount": _round2(scaled), "source": "sbcp", "note": note})
 
 
+def _occupied_design_canons(lines: list[dict[str, Any]]) -> set[str]:
+    """Design-каноны, занятые обычными строками расчёта (для анти-задвоения агрегатов).
+
+    Композиты раскрываются в обе стороны: занят ar -> исключаем и ar, и ar_kr аналога;
+    занят ar_kr -> исключаем ar_kr, ar и kr. Лучше слегка занизить агрегат, чем задвоить.
+    """
+    occupied: set[str] = set()
+    for line in lines:
+        canon = line.get("canon")
+        if not canon or canon in AGGREGATE_DESIGN_KEYS:
+            continue
+        if line.get("group") != "design":
+            continue
+        occupied.add(canon)
+        for composite, parts in COMPOSITE_SECTIONS.items():
+            if canon == composite:
+                occupied.update(parts)
+            elif canon in parts:
+                occupied.add(composite)
+    return occupied
+
+
+def _aggregate_stats(
+    factor: float,
+    analogs: list[AnalogProject],
+    excluded: set[str],
+    *,
+    absolute: bool,
+    target_total: float | None,
+) -> _Stats:
+    """Производная статистика агрегата ПД/РД: доля от суммы design-группы аналога.
+
+    По каждому аналогу: D = сумма его design-разделов (суммы в offer-режиме, доли в
+    nmck-режиме) без занятых канонов и без самих агрегатов; значение = factor × D.
+    Аналог участвует, если у него ≥3 design-канонов с данными (разреженный занижает).
+    """
+    stats = _Stats()
+    for project in analogs:
+        data = project.amounts if absolute else project.sections
+        total = 0.0
+        matched = 0
+        for canon, value in data.items():
+            if canon in excluded or canon in AGGREGATE_DESIGN_KEYS:
+                continue
+            section = CATALOG_BY_KEY.get(canon)
+            if section is None or section.group != "design":
+                continue
+            if value is None or value <= 0:
+                continue
+            if not absolute and value >= 0.9:
+                continue
+            total += float(value)
+            matched += 1
+        if matched < 3 or total <= 0:
+            continue
+        if not absolute and total >= 0.95:
+            continue
+        stats.values.append(factor * total)
+        stats.titles.append(project.title)
+        stats.weights.append(_analog_weight(project, target_total))
+    return stats
+
+
+def _apply_aggregate_estimates(
+    lines: list[dict[str, Any]],
+    analogs: list[AnalogProject],
+    *,
+    nmck: float | None,
+    warnings: list[str],
+) -> None:
+    """Оценить агрегаты «ПД/РД целиком» производно от design-группы аналогов.
+
+    Прямой статистики по агрегатам в базе нет (строки бюро пораздельные), поэтому
+    сумма design-группы аналога делится по п. 1.5 СБЦП (ПД 40% / РД 60%). Разделы,
+    уже расписанные отдельными строками, исключаются — иначе двойной счёт.
+    """
+    absolute = nmck is None
+    occupied = _occupied_design_canons(lines)
+    seen_aggregates: set[str] = set()
+    for line in lines:
+        canon = line.get("canon")
+        if canon not in AGGREGATE_DESIGN_KEYS or line.get("source") != "no_data":
+            continue
+        if canon in seen_aggregates:
+            warnings.append(
+                f"Агрегат «{line['name']}» повторяется — вторая строка оставлена без "
+                "оценки, проверьте состав расчёта."
+            )
+            continue
+        seen_aggregates.add(canon)
+        factor = AGGREGATE_DESIGN_KEYS[str(canon)]
+        stats = _aggregate_stats(
+            factor, analogs, occupied, absolute=absolute, target_total=nmck
+        )
+        if not stats.values:
+            continue  # остаётся no_data — честнее, чем выдумывать
+        median = _weighted_median(stats.values, stats.weights)
+        note = (
+            "производная оценка: сумма разделов ПД/РД аналогов минус разделы, уже "
+            f"расписанные отдельными строками; доля стадии {factor:.0%} "
+            "(п. 1.5 СБЦП: ПД 40 / РД 60). Точнее — расписать состав по разделам."
+        )
+        line.update(
+            {
+                "source": "derived",
+                "n_analogs": len(stats.values),
+                "analog_titles": stats.titles[:5],
+                "note": note,
+            }
+        )
+        if absolute:
+            line["amount"] = _round2(median)
+            line["range_amount"] = [_round2(min(stats.values)), _round2(max(stats.values))]
+        else:
+            line["share_pct"] = round(median * 100, 2)
+            line["amount"] = _round2(median * float(nmck or 0))
+            line["range_pct"] = [
+                round(min(stats.values) * 100, 2),
+                round(max(stats.values) * 100, 2),
+            ]
+    if seen_aggregates and "pd_rd_total" in seen_aggregates and len(seen_aggregates) > 1:
+        warnings.append(
+            "В расчёте одновременно «ПД+РД целиком» и отдельные агрегаты ПД/РД — "
+            "возможен двойной счёт, проверьте строки."
+        )
+
+
 def _plan_fact_coef(
     canon: str | None, plan_fact: dict[str, tuple[float, int]] | None
 ) -> tuple[float, int] | None:
@@ -277,7 +409,7 @@ def _apply_plan_fact(
     """
     corrected = 0
     for line in lines:
-        if line.get("amount") is None or line.get("source") not in ("analog", "sbcp"):
+        if line.get("amount") is None or line.get("source") not in ("analog", "sbcp", "derived"):
             continue
         found = _plan_fact_coef(line.get("canon"), plan_fact)
         if found is None:
@@ -443,6 +575,9 @@ def build_payload(
 
     for section in sections:
         canon = section.canon if section.canon in CATALOG_BY_KEY else None
+        if canon is None:
+            # фолбэк: ИИ не подобрал канон, но имя — агрегат стадии («ПД», «РД»…)
+            canon = detect_aggregate(section.name)
         entry: dict[str, Any] = {
             "name": section.name,
             "canon": canon,
@@ -457,7 +592,9 @@ def build_payload(
             "range_pct": None,
             "analog_titles": [],
         }
-        if canon is not None:
+        # агрегаты минуют пораздельную статистику (в базе их нет) — их оценивает
+        # _apply_aggregate_estimates производно от design-группы аналогов
+        if canon is not None and canon not in AGGREGATE_DESIGN_KEYS:
             stats = _section_stats(
                 canon, analogs, absolute=offer_mode, target_total=base.nmck
             )
@@ -487,6 +624,7 @@ def build_payload(
                     covered_overheads.add(canon)
         lines.append(entry)
 
+    _apply_aggregate_estimates(lines, analogs, nmck=base.nmck, warnings=warnings)
     _apply_sbcp_fallback(
         lines,
         nmck=base.nmck,
@@ -864,6 +1002,30 @@ def _recompute_totals(payload: dict[str, Any]) -> None:
             "Разделы без данных по аналогам (в сумме НЕ учтены, нужна ручная оценка): "
             + "; ".join(no_data)
         )
+    # крупные проектные позиции без оценки — итог фактически занижен, кричим первым
+    big_missing = [
+        line["name"]
+        for line in payload["lines"]
+        if line.get("amount") is None
+        and (line.get("group") == "design" or line.get("canon") in AGGREGATE_DESIGN_KEYS)
+    ]
+    if big_missing:
+        warnings.insert(
+            0,
+            "⚠ Итог ЗАНИЖЕН: крупные проектные разделы без оценки — "
+            + "; ".join(big_missing)
+            + ". Себестоимость неполная, оцените их вручную.",
+        )
+    # один design-канон в нескольких строках — вероятен двойной счёт
+    canon_counts: dict[str, int] = {}
+    for line in payload["lines"]:
+        canon = line.get("canon")
+        if canon and canon not in AGGREGATE_DESIGN_KEYS and line.get("group") == "design":
+            canon_counts[canon] = canon_counts.get(canon, 0) + 1
+    doubled = sorted(c for c, n in canon_counts.items() if n > 1)
+    if doubled:
+        labels = ", ".join(CATALOG_BY_KEY[c].label for c in doubled if c in CATALOG_BY_KEY)
+        warnings.append(f"Возможен двойной счёт: раздел(ы) в нескольких строках — {labels}.")
     payload["no_data"] = no_data
     payload["warnings"] = warnings + list(payload.get("warnings_static", []))
 
