@@ -108,15 +108,51 @@
       </select>
     </div>
     {% if facets.uploads %}
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">Выгрузки <span class="text-slate-400">(Ctrl/⌘ — несколько; пусто — все)</span></label>
-      <select name="upload" multiple size="{{ 4 if facets.uploads | length > 4 else facets.uploads | length }}"
-              class="border border-slate-300 rounded-md px-2 py-1.5 text-sm max-w-[260px]">
+    <div class="relative" id="upload-dd">
+      <label class="block text-xs text-slate-500 mb-1">Выгрузки</label>
+      <button type="button" id="upload-dd-btn"
+              class="border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white min-w-[180px] max-w-[260px] text-left flex items-center justify-between gap-2">
+        <span id="upload-dd-label" class="truncate">
+          {%- if f.uploads %}выбрано: {{ f.uploads | length }}{% else %}все закупки{% endif -%}
+        </span>
+        <span class="text-slate-400">▾</span>
+      </button>
+      <div id="upload-dd-panel" hidden
+           class="absolute z-20 mt-1 w-80 max-h-64 overflow-auto rounded-md border border-slate-200 bg-white shadow-lg p-2 space-y-0.5">
+        <button type="button" id="upload-dd-clear"
+                class="w-full text-left text-xs text-indigo-600 hover:text-indigo-800 px-2 py-1">
+          ✕ снять всё (показывать все закупки)
+        </button>
         {% for u in facets.uploads %}
-        <option value="{{ u.id }}" {{ 'selected' if u.id in f.uploads }}>{{ (u.file or '—').split('/')|last }} · {{ u.uploaded_at | date_ru }} · {{ u.count }}</option>
+        <label class="flex items-center gap-2 text-[13px] text-slate-700 px-2 py-1 rounded hover:bg-slate-50 cursor-pointer">
+          <input type="checkbox" name="upload" value="{{ u.id }}" {{ 'checked' if u.id in f.uploads }}
+                 class="rounded border-slate-300 shrink-0">
+          <span class="truncate">{{ (u.file or '—').split('/')|last }} · {{ u.uploaded_at | date_ru }} · {{ u.count }}</span>
+        </label>
         {% endfor %}
-      </select>
+      </div>
     </div>
+    <script>
+    (function () {
+      var dd = document.getElementById('upload-dd');
+      var btn = document.getElementById('upload-dd-btn');
+      var panel = document.getElementById('upload-dd-panel');
+      var label = document.getElementById('upload-dd-label');
+      function refresh() {
+        var n = panel.querySelectorAll('input[name=upload]:checked').length;
+        label.textContent = n ? 'выбрано: ' + n : 'все закупки';
+      }
+      btn.addEventListener('click', function () { panel.hidden = !panel.hidden; });
+      document.addEventListener('click', function (e) {
+        if (!dd.contains(e.target)) panel.hidden = true;
+      });
+      panel.addEventListener('change', refresh);
+      document.getElementById('upload-dd-clear').addEventListener('click', function () {
+        panel.querySelectorAll('input[name=upload]').forEach(function (cb) { cb.checked = false; });
+        refresh();
+      });
+    })();
+    </script>
     {% endif %}
     <div>
       <label class="block text-xs text-slate-500 mb-1">НМЦ, ₽</label>
