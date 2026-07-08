@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 _BUDGET_LAWS = ("44-ФЗ", "615 ПП")
@@ -53,6 +54,34 @@ def _small_object_exempt(drivers: dict[str, Any], budget: bool | None) -> str | 
     return None
 
 
+_NOT_REQUIRED_RX = re.compile(
+    r"экспертиз\w*[^.;]{0,60}?не\s+(?:требуется|проводится|предусмотрен)"
+    r"|не\s+(?:требуется|подлежит|предусмотрен\w*)[^.;]{0,40}экспертиз",
+)
+
+
+def _expertise_from_brief_text(brief: dict[str, Any]) -> tuple[str | None, str]:
+    """Режим экспертизы из ТЕКСТА брифа (поле «Госэкспертиза и кто оплачивает»).
+
+    ИИ-разбор ТЗ кладёт сюда формулировки документа (value + цитата) — по ним
+    определяем state | nongov | none. Работает и для старых брифов без drivers.
+    """
+    field = brief.get("expertise")
+    if not isinstance(field, dict):
+        return None, ""
+    text = " ".join(str(field.get(key) or "") for key in ("value", "quote")).strip()
+    low = text.lower()
+    if not low or low == "не указано":
+        return None, ""
+    if _NOT_REQUIRED_RX.search(low):
+        return "none", text
+    if "негосударствен" in low:
+        return "nongov", text
+    if "государствен" in low or re.search(r"\bгос\.?\s*эксперт", low):
+        return "state", text
+    return None, text
+
+
 def assess_expertise(brief: dict[str, Any], law: str | None) -> dict[str, Any]:
     """Оценка режима экспертизы: verdict + причины + рекомендация для расчёта.
 
@@ -61,6 +90,14 @@ def assess_expertise(brief: dict[str, Any], law: str | None) -> dict[str, Any]:
     drivers_raw = brief.get("drivers")
     drivers: dict[str, Any] = drivers_raw if isinstance(drivers_raw, dict) else {}
     reasons: list[str] = []
+
+    # что о экспертизе написано в самом ТЗ: структурный драйвер, иначе — текст брифа
+    in_tz = drivers.get("expertise_in_tz")
+    if in_tz is None:
+        in_tz, tz_text = _expertise_from_brief_text(brief)
+        if in_tz is not None:
+            labels = {"state": "гос", "nongov": "негос", "none": "не требуется"}
+            reasons.append(f"из текста ТЗ ({labels[in_tz]}): «{tz_text[:180]}»")
 
     budget: bool | None = drivers.get("budget_funded")
     if budget is None and law:
@@ -106,6 +143,11 @@ def assess_expertise(brief: dict[str, Any], law: str | None) -> dict[str, Any]:
     if budget and not any("бюджет" in r for r in reasons):
         reasons.append("бюджетное финансирование — гос экспертиза обязательна")
     if drivers.get("okn") or drivers.get("special_territory") or budget:
+        if in_tz in ("nongov", "none"):
+            reasons.append(
+                "⚠ противоречие: ТЗ упоминает иной режим, но основания выше требуют "
+                "гос экспертизу — уточните у заказчика"
+            )
         return {
             "verdict": "state_required",
             "reasons": reasons,
@@ -116,7 +158,6 @@ def assess_expertise(brief: dict[str, Any], law: str | None) -> dict[str, Any]:
         }
 
     # 4) явное указание в ТЗ — уважаем, если правила выше не сработали
-    in_tz = drivers.get("expertise_in_tz")
     if in_tz == "state":
         return {
             "verdict": "state_required",

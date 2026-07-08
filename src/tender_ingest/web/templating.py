@@ -46,7 +46,7 @@ def qs(f: Filters, **overrides: object) -> str:
         "law": f.law,
         "nmck_min": f.nmck_min,
         "nmck_max": f.nmck_max,
-        "upload": f.upload,
+        "upload": f.uploads or None,
         "fav": "1" if f.fav else None,
         "closed": "1" if f.closed else None,
         "sort": f.sort,

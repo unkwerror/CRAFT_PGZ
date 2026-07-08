@@ -102,6 +102,8 @@ def test_filters_bad_nmck_dropped() -> None:
 
 
 def test_filters_upload_parsed() -> None:
-    assert Filters.from_query(upload="3").upload == 3
-    assert Filters.from_query(upload="мусор").upload is None
-    assert Filters.from_query().upload is None
+    assert Filters.from_query(upload="3").uploads == [3]
+    assert Filters.from_query(upload=["3", "7"]).uploads == [3, 7]
+    assert Filters.from_query(upload=["3", "мусор"]).uploads == [3]
+    assert Filters.from_query(upload="мусор").uploads == []
+    assert Filters.from_query().uploads == []

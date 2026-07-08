@@ -93,7 +93,8 @@ class Filters:
     law: str | None = None  # тип торгов (44-ФЗ / 223-ФЗ / …)
     nmck_min: Decimal | None = None
     nmck_max: Decimal | None = None
-    upload: int | None = None  # id выгрузки (ingestion_runs.id) — переключение выгрузок
+    # id выгрузок (ingestion_runs.id): пусто — все, несколько — объединение
+    uploads: list[int] = field(default_factory=list)
     fav: bool = False  # только избранные
     closed: bool = False  # только закрытые тендеры (source='closed')
     sort: str = "score"
@@ -111,13 +112,15 @@ class Filters:
         law: str | None = None,
         nmck_min: str | None = None,
         nmck_max: str | None = None,
-        upload: str | None = None,
+        upload: list[str] | str | None = None,
         fav: str | None = None,
         closed: str | None = None,
         sort: str | None = None,
         page: str | None = None,
     ) -> Filters:
         """Прощающий разбор: мусор -> None, без 422 на кривой ввод в форме."""
+        upload_raw = [upload] if isinstance(upload, str) else (upload or [])
+        uploads = [uid for u in upload_raw if (uid := _to_int(u)) is not None]
         return cls(
             search=_clean(search),
             exact=_flag(exact),
@@ -127,7 +130,7 @@ class Filters:
             law=_clean(law),
             nmck_min=_to_decimal(nmck_min),
             nmck_max=_to_decimal(nmck_max),
-            upload=_to_int(upload),
+            uploads=uploads,
             fav=_flag(fav),
             closed=_flag(closed),
             sort=sort if sort in _SORTS else "score",
@@ -178,10 +181,10 @@ class WebRepository:
             stmt = stmt.where(Tender.nmck >= f.nmck_min)
         if f.nmck_max is not None:
             stmt = stmt.where(Tender.nmck <= f.nmck_max)
-        if f.upload is not None:
+        if f.uploads:
             stmt = stmt.where(
                 Tender.reestr_number.in_(
-                    select(TenderUpload.reestr_number).where(TenderUpload.run_id == f.upload)
+                    select(TenderUpload.reestr_number).where(TenderUpload.run_id.in_(f.uploads))
                 )
             )
         if f.fav:

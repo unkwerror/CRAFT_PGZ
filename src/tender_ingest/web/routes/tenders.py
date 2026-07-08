@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
 
 from tender_ingest.db.session import get_session_factory
@@ -35,7 +35,7 @@ def index(  # noqa: PLR0913 — плоский разбор query-парамет
     law: str | None = None,
     nmck_min: str | None = None,
     nmck_max: str | None = None,
-    upload: str | None = None,
+    upload: list[str] | None = Query(None),  # noqa: B008 — мультивыбор выгрузок
     fav: str | None = None,
     closed: str | None = None,
     sort: str | None = None,

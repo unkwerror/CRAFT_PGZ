@@ -395,6 +395,43 @@ def test_expertise_rules() -> None:
     assert okn["verdict"] == "state_required"
 
 
+def test_expertise_from_brief_text() -> None:
+    """Без drivers режим подхватывается из текста поля «Госэкспертиза» брифа."""
+    from tender_ingest.economics.expertise import assess_expertise
+
+    state = assess_expertise(
+        {"expertise": {"value": "Требуется прохождение государственной экспертизы ПД",
+                       "quote": ""}},
+        "Коммерческие",
+    )
+    assert state["verdict"] == "state_required"
+    assert any("из текста ТЗ" in r for r in state["reasons"])
+
+    nongov = assess_expertise(
+        {"expertise": {"value": "Допускается негосударственная экспертиза по выбору",
+                       "quote": ""}},
+        "Коммерческие",
+    )
+    assert nongov["verdict"] == "nongov_allowed"
+
+    none_ = assess_expertise(
+        {"expertise": {"value": "Экспертиза проектной документации не требуется", "quote": ""}},
+        "Коммерческие",
+    )
+    assert none_["verdict"] == "not_required"
+
+    # «не указано» — не сигнал
+    unknown = assess_expertise({"expertise": {"value": "не указано", "quote": ""}}, None)
+    assert unknown["verdict"] == "unknown"
+
+    # 44-ФЗ (бюджет) главнее текста про негос: гос + предупреждение о противоречии
+    conflict = assess_expertise(
+        {"expertise": {"value": "Негосударственная экспертиза", "quote": ""}}, "44-ФЗ"
+    )
+    assert conflict["verdict"] == "state_required"
+    assert any("противоречие" in r for r in conflict["reasons"])
+
+
 def test_sbcp_check_flags_deviation() -> None:
     base = BaseInput(nmck=10_000_000.0)
     sections = [
