@@ -102,3 +102,30 @@ def test_build_context_without_scoring() -> None:
     ctx = build_context(_card(), None)
     assert "КАРТОЧКА ЗАКУПКИ" in ctx
     assert "БЫСТРЫЙ СКОРИНГ" not in ctx
+
+
+def test_schemas_have_no_enum_with_type_list() -> None:
+    """Structured output отклоняет enum при type ["string","null"] (400 Invalid schema).
+
+    Реальный инцидент 2026-07-08: все разборы ТЗ падали из-за drivers.object_use.
+    Nullable-перечисления допустимы только через anyOf.
+    """
+    from tender_ingest.documents.prompt import BRIEF_SCHEMA, brief_schema_with_card
+    from tender_ingest.economics.proposer import PROPOSAL_SCHEMA
+
+    def walk(node: object, path: str) -> None:
+        if isinstance(node, dict):
+            if "enum" in node and isinstance(node.get("type"), list):
+                raise AssertionError(f"enum вместе со списком типов: {path}")
+            for key, value in node.items():
+                walk(value, f"{path}.{key}")
+        elif isinstance(node, list):
+            for i, item in enumerate(node):
+                walk(item, f"{path}[{i}]")
+
+    for name, schema in [
+        ("BRIEF_SCHEMA", BRIEF_SCHEMA),
+        ("BRIEF_SCHEMA+card", brief_schema_with_card()),
+        ("PROPOSAL_SCHEMA", PROPOSAL_SCHEMA),
+    ]:
+        walk(schema, name)
