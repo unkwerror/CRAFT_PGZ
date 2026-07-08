@@ -79,15 +79,13 @@ quote и page — как везде. Если состав работ в ТЗ н
 - kapremont — предмет закупки: капитальный ремонт (не строительство/реконструкция);
 - floors — этажность (максимальная, число);
 - area_m2 — общая площадь объекта в кв. м (число, без единиц);
-- buildings_count — количество отдельных зданий/сооружений;
 - okn — объект культурного наследия или работы в зонах охраны ОКН;
-- object_use — residential (жилой) | nonresidential (нежилой) | industrial \
-(производственный) | linear (линейный) | null;
+- object_use — СТРОГО одно из: residential (жилой) | nonresidential (нежилой) | \
+industrial (производственный) | linear (линейный) | null;
 - special_territory — ООПТ, шельф, исключительная экономическая зона, морские воды;
 - hazardous_or_unique — особо опасный, технически сложный или уникальный объект;
-- expertise_in_tz — что о прохождении экспертизы написано в САМОМ ТЗ: state (гос) | \
-nongov (негос) | none (не требуется) | null (не сказано);
-- expertise_paid_by — designer (за счёт проектировщика) | customer (заказчика) | null.
+- expertise_in_tz — что о прохождении экспертизы написано в САМОМ ТЗ, СТРОГО одно из: \
+state (гос) | nongov (негос) | none (не требуется) | null (не сказано).
 Заполняй только тем, что реально следует из ТЗ и карточки — НЕ выдумывай.
 
 summary — развёрнутый бриф на 5–10 предложений: суть объекта, состав и объём работ, \
@@ -113,7 +111,6 @@ _DRIVERS_SCHEMA: dict[str, Any] = {
         "kapremont": {"type": ["boolean", "null"]},
         "floors": {"type": ["number", "null"]},
         "area_m2": {"type": ["number", "null"]},
-        "buildings_count": {"type": ["number", "null"]},
         "okn": {"type": ["boolean", "null"]},
         # БЕЗ enum: enum при nullable-типе даёт 400 Invalid schema, а anyOf-вариант
         # раздувает грамматику до «compiled grammar is too large». Допустимые значения
@@ -122,20 +119,17 @@ _DRIVERS_SCHEMA: dict[str, Any] = {
         "special_territory": {"type": ["boolean", "null"]},
         "hazardous_or_unique": {"type": ["boolean", "null"]},
         "expertise_in_tz": {"type": ["string", "null"]},
-        "expertise_paid_by": {"type": ["string", "null"]},
     },
     "required": [
         "budget_funded",
         "kapremont",
         "floors",
         "area_m2",
-        "buildings_count",
         "okn",
         "object_use",
         "special_territory",
         "hazardous_or_unique",
         "expertise_in_tz",
-        "expertise_paid_by",
     ],
     "additionalProperties": False,
 }
