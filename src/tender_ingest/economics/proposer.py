@@ -33,8 +33,9 @@ from tender_ingest.economics.store import AnalogProject, contract_scale_note
 log = structlog.get_logger()
 
 # Большое ТЗ даёт много sections с цитатами: 8000 не хватало (ответ обрезался,
-# json.loads падал). 16000 с запасом; обрезку теперь ловим по stop_reason.
-_MAX_TOKENS = 16000
+# json.loads падал). У Sonnet 5 адаптивный thinking включён по умолчанию и его
+# токены входят в max_tokens, а effort=high углубляет рассуждения — держим запас.
+_MAX_TOKENS = 24000
 _SHEET_LABEL = {"work": "факт", "preliminary": "прикидка"}
 
 _CANON_KEYS = [s.key for s in CATALOG]
@@ -251,7 +252,10 @@ class EconomicsProposer:
                 {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
             ],
             messages=[{"role": "user", "content": message}],
-            output_config={"format": {"type": "json_schema", "schema": PROPOSAL_SCHEMA}},
+            output_config={
+                "effort": "high",
+                "format": {"type": "json_schema", "schema": PROPOSAL_SCHEMA},
+            },
         )
         if resp.stop_reason == "max_tokens":
             raise RuntimeError(

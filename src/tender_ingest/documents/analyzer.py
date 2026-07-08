@@ -29,7 +29,9 @@ from tender_ingest.documents.prompt import (
 
 log = structlog.get_logger()
 
-_MAX_TOKENS = 16000  # развёрнутый бриф: подробные поля + много findings с цитатами
+# Развёрнутый бриф: подробные поля + много findings с цитатами; thinking Sonnet 5
+# входит в max_tokens, effort=high добавляет рассуждений — запас обязателен.
+_MAX_TOKENS = 24000
 
 # Лимиты нативного PDF у Claude: ~32 МБ на запрос (с base64-накладными) и ~100 страниц.
 # Держим сырой PDF-кусок ≤ 20 МБ (base64 ≈ 27 МБ) и ≤ 100 стр. Всего страниц ограничиваем,
@@ -84,7 +86,10 @@ class DocumentAnalyzer:
                 {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
             ],
             messages=[{"role": "user", "content": content}],
-            output_config={"format": {"type": "json_schema", "schema": schema}},
+            output_config={
+                "effort": "high",
+                "format": {"type": "json_schema", "schema": schema},
+            },
         )
         if resp.stop_reason == "max_tokens":
             raise RuntimeError(

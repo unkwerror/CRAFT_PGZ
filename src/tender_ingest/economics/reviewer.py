@@ -23,7 +23,9 @@ from tender_ingest.config import MissingApiKeyError, Settings, get_settings
 
 log = structlog.get_logger()
 
-_MAX_TOKENS = 8000
+# Ревью с веб-поиском при effort=high тратит заметную долю на thinking (входит
+# в max_tokens у Sonnet 5) — держим запас.
+_MAX_TOKENS = 16000
 _MAX_WEB_SEARCHES = 6
 
 REVIEW_SYSTEM = """Ты — независимый аудитор экономики проектного бюро «КРАФТ ГРУПП» \
@@ -171,6 +173,7 @@ class EconomicsReviewer:
                 {"type": "text", "text": REVIEW_SYSTEM, "cache_control": {"type": "ephemeral"}}
             ],
             messages=[{"role": "user", "content": message}],
+            output_config={"effort": "high"},
             tools=[
                 {
                     "type": "web_search_20250305",
