@@ -17,12 +17,22 @@ function ecoEditorInit() {
     return isFinite(n) ? n : null;
   }
 
-  // Название раздела — авторастущий textarea: текст из ТЗ виден целиком
+  // Название раздела — авторастущий textarea: текст из ТЗ виден целиком.
+  // У скрытой вкладки scrollHeight = 0, поэтому размер считаем только когда
+  // элемент видим, и пересчитываем при открытии вкладки «Экономика».
   function autosize(el) {
+    if (!el.offsetParent) return;
     el.style.height = 'auto';
     el.style.height = el.scrollHeight + 'px';
   }
-  root.querySelectorAll('textarea[data-f=name]').forEach(autosize);
+  function autosizeAll() {
+    root.querySelectorAll('textarea[data-f=name]').forEach(autosize);
+  }
+  autosizeAll();
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('[data-tab]')) setTimeout(autosizeAll, 0);
+  });
+  window.addEventListener('hashchange', function () { setTimeout(autosizeAll, 0); });
 
   function collectBucket(tbodyId) {
     var refs = [];
