@@ -228,21 +228,25 @@ CARD_INSTRUCTION = (
 
 
 def brief_schema_with_card() -> dict[str, Any]:
-    """BRIEF_SCHEMA + объект card (для закрытых тендеров без карточки Контура)."""
-    schema = {
-        **BRIEF_SCHEMA,
-        "properties": {
-            **BRIEF_SCHEMA["properties"],
-            "card": {
-                "type": "object",
-                "properties": _CARD_PROPERTIES,
-                "required": list(_CARD_PROPERTIES),
-                "additionalProperties": False,
-            },
-        },
-        "required": [*BRIEF_SCHEMA["required"], "card"],
+    """BRIEF_SCHEMA + объект card (для закрытых тендеров без карточки Контура).
+
+    Блок drivers здесь ИСКЛЮЧЁН: card + drivers вместе превышают лимит компиляции
+    грамматики structured output («compiled grammar is too large»). Для закрытых
+    тендеров режим экспертизы определяется текстовым фолбэком по полю expertise
+    (economics/expertise.py) — структурные драйверы не критичны.
+    """
+    properties = {k: v for k, v in BRIEF_SCHEMA["properties"].items() if k != "drivers"}
+    properties["card"] = {
+        "type": "object",
+        "properties": _CARD_PROPERTIES,
+        "required": list(_CARD_PROPERTIES),
+        "additionalProperties": False,
     }
-    return schema
+    return {
+        **BRIEF_SCHEMA,
+        "properties": properties,
+        "required": [*(k for k in BRIEF_SCHEMA["required"] if k != "drivers"), "card"],
+    }
 
 
 # Порядок и подписи обязательных полей для отрисовки брифа.
